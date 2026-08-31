@@ -156,6 +156,47 @@ if(ELANORA_WITH_BRAINFLOW)
   )
   add_library(elanora::brainflow ALIAS elanora_brainflow)
 
+  # Upstream bug, BrainFlow 5.16.0: several vendored bglib sources use symbols
+  # without including the header that declares them. They compiled historically
+  # because older MSVC STL headers pulled these in transitively; 19.44 no
+  # longer does.
+  #
+  # Injected at configure time rather than kept as patch files, so a fresh
+  # FetchContent clone self-heals and the fix survives a version bump that
+  # happens to fix it upstream (the guard makes it a no-op then).
+  set(_bf_missing_includes
+    "src/board_controller/muse/muse_bglib/muse_bglib_helper.cpp|chrono"
+    "src/board_controller/muse/muse_bglib/uart.cpp|stdlib.h"
+    "src/board_controller/neuromd/brainbit_bglib/uart.cpp|stdlib.h"
+    "src/board_controller/openbci/ganglion_bglib/uart.cpp|stdlib.h"
+  )
+  foreach(_entry IN LISTS _bf_missing_includes)
+    string(REPLACE "|" ";" _parts "${_entry}")
+    list(GET _parts 0 _rel)
+    list(GET _parts 1 _hdr)
+    set(_abs "${brainflow_SOURCE_DIR}/${_rel}")
+    if(EXISTS "${_abs}")
+      file(READ "${_abs}" _src)
+      string(FIND "${_src}" "#include <${_hdr}>" _found)
+      if(_found EQUAL -1)
+        string(PREPEND _src "#include <${_hdr}>
+")
+        file(WRITE "${_abs}" "${_src}")
+        message(STATUS "BrainFlow: injected #include <${_hdr}> into ${_rel}")
+      endif()
+    endif()
+  endforeach()
+
+  # BrainFlow ships backends for many headsets. BrainBit and OpenBCI Ganglion
+  # are not used here and each pulls in a sizeable vendored bglib tree, so they
+  # are dropped from the default build purely to save compile time. They do
+  # compile once the include injection above has run.
+  foreach(_bf_unused BrainBitLib GanglionLib)
+    if(TARGET ${_bf_unused})
+      set_target_properties(${_bf_unused} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    endif()
+  endforeach()
+
   # BrainFlow writes its shared libraries into its own source tree rather than
   # the build tree, so $<TARGET_RUNTIME_DLLS> does not find them. Record the
   # location for elanora_copy_runtime_dlls() in the top-level CMakeLists.

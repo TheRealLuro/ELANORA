@@ -47,6 +47,10 @@ void StreamRecorder::drain(BrainFlowPresets preset) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!running_) return;
+        // Skip presets this board does not expose. Checked before pulling,
+        // not after: calling get_board_data for an absent preset logs an
+        // error every time, which at 20 Hz buries any real failure in noise.
+        if (stream_for(preset).ts_channel < 0) return;
         dev = device_;
     }
     if (dev == nullptr) return;

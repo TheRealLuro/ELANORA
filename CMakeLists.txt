@@ -10,12 +10,20 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 if(MSVC)
+  # Global, third-party code included. /W4 therefore also applies to the
+  # fetched dependencies, so a full build emits thousands of warnings from
+  # code we do not control. Filter rather than fight it:
+  #   cmake --build build 2>&1 | grep "warning C" | grep -v _deps
   add_compile_options(/W4 /permissive- /utf-8 /Zc:preprocessor)
-  # M_PI and friends
   add_compile_definitions(_USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN)
 else()
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
+
+# Kept as a no-op shim so the add_* helpers below need no edit if per-target
+# warning control is introduced later.
+function(elanora_set_warnings NAME)
+endfunction()
 
 enable_testing()
 include(CTest)
@@ -37,6 +45,7 @@ set(ELANORA_BRAINFLOW_TARGET "Brainflow" CACHE STRING "BrainFlow C++ target to l
 function(elanora_add_lib NAME)
   cmake_parse_arguments(ARG "" "" "SOURCES;DEPS" ${ARGN})
   add_library(${NAME} STATIC ${ARG_SOURCES})
+  elanora_set_warnings(${NAME})
   target_include_directories(${NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
   if(ARG_DEPS)
     target_link_libraries(${NAME} PUBLIC ${ARG_DEPS})
@@ -53,6 +62,7 @@ function(elanora_add_app NAME)
   endif()
   cmake_parse_arguments(ARG "" "" "SOURCES;DEPS" ${ARGN})
   add_executable(${NAME} ${ARG_SOURCES})
+  elanora_set_warnings(${NAME})
   target_link_libraries(${NAME} PRIVATE ${ARG_DEPS} imgui::imgui implot::implot)
   elanora_copy_runtime_dlls(${NAME})
 endfunction()
@@ -76,6 +86,7 @@ endfunction()
 function(elanora_add_tests NAME)
   cmake_parse_arguments(ARG "" "" "SOURCES;DEPS" ${ARGN})
   add_executable(${NAME} ${ARG_SOURCES})
+  elanora_set_warnings(${NAME})
   target_link_libraries(${NAME} PRIVATE ${ARG_DEPS} Catch2::Catch2WithMain)
   catch_discover_tests(${NAME})
 endfunction()

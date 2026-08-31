@@ -56,7 +56,7 @@ Binaries land in `build/bin/`.
 ## Status
 
 Milestone 0 (foundation) is **complete and verified**: configured, compiled
-warning-free under `/W4`, and all 24 tests pass. The GUI stack is verified by
+warning-free under `/W4`, and all 38 tests pass. The GUI stack is verified by
 `ui_smoke`, which opens a real window, renders through ImGui and ImPlot, and
 tears down cleanly.
 
@@ -66,7 +66,7 @@ Verified toolchain: MSVC 19.44 (VS 2022 BuildTools), CMake 4.x, Windows SDK
 | Milestone | State |
 |---|---|
 | 0 Foundation | **Verified** — build, tests, `ui_smoke` |
-| 1 Device layer | Task 4 (MuseDevice) **verified**; Tasks 5-7 not started |
+| 1 Device layer | Tasks 4-6 **verified**; Task 7 app built, awaiting hardware check |
 | 2 Collector | Not started |
 | 3 Features | Not started |
 | 4 Evidence gate | Not started |
@@ -81,6 +81,8 @@ cmake --build build --config Debug
 ctest --test-dir build -C Debug --output-on-failure
 ./build/bin/Debug/ui_smoke --frames 60
 ./build/bin/Debug/muse_probe          # prints the Muse 2 channel map, no headset needed
+./build/bin/Debug/muse_monitor --synthetic --autoconnect --frames 180
+./build/bin/Debug/muse_monitor        # live view, needs a real Muse 2
 ```
 
 ### Verified hardware facts
