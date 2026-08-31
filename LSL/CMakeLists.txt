@@ -5,6 +5,7 @@ if(ELANORA_WITH_BRAINFLOW)
     SOURCES
       src/muse_device.cpp
       src/stream_recorder.cpp
+      src/signal_quality.cpp
     DEPS
       elanora_common
       elanora::brainflow
@@ -14,6 +15,7 @@ if(ELANORA_WITH_BRAINFLOW)
     SOURCES
       tests/test_muse_device.cpp
       tests/test_stream_recorder.cpp
+      tests/test_signal_quality.cpp
     DEPS
       elanora_lsl
   )
