@@ -56,7 +56,7 @@ Binaries land in `build/bin/`.
 ## Status
 
 Milestone 0 (foundation) is **complete and verified**: configured, compiled
-warning-free under `/W4`, and all 15 tests pass. The GUI stack is verified by
+warning-free under `/W4`, and all 24 tests pass. The GUI stack is verified by
 `ui_smoke`, which opens a real window, renders through ImGui and ImPlot, and
 tears down cleanly.
 
@@ -65,8 +65,8 @@ Verified toolchain: MSVC 19.44 (VS 2022 BuildTools), CMake 4.x, Windows SDK
 
 | Milestone | State |
 |---|---|
-| 0 Foundation | **Verified** — 15/15 tests pass, `ui_smoke` runs |
-| 1 Device layer | Not started |
+| 0 Foundation | **Verified** — build, tests, `ui_smoke` |
+| 1 Device layer | Task 4 (MuseDevice) **verified**; Tasks 5-7 not started |
 | 2 Collector | Not started |
 | 3 Features | Not started |
 | 4 Evidence gate | Not started |
@@ -80,4 +80,18 @@ cmake -B build -S .
 cmake --build build --config Debug
 ctest --test-dir build -C Debug --output-on-failure
 ./build/bin/Debug/ui_smoke --frames 60
+./build/bin/Debug/muse_probe          # prints the Muse 2 channel map, no headset needed
 ```
+
+### Verified hardware facts
+
+`muse_probe` output, confirmed against BrainFlow 5.16.0:
+
+| Preset | Rate | Channels |
+|---|---|---|
+| DEFAULT (EEG) | 256 Hz | 4 — TP9, AF7, AF8, TP10 |
+| AUXILIARY (IMU) | 52 Hz | 3 accel + 3 gyro |
+| ANCILLARY (PPG) | 64 Hz | 3 — `[0]` red 660nm, `[1]` IR 940nm, `[2]` ambient |
+
+The datasheet's "2-channel PPG" counts active wavelengths; BrainFlow also
+exposes the ambient reference channel.

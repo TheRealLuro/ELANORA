@@ -54,11 +54,19 @@ function(elanora_add_app NAME)
   cmake_parse_arguments(ARG "" "" "SOURCES;DEPS" ${ARGN})
   add_executable(${NAME} ${ARG_SOURCES})
   target_link_libraries(${NAME} PRIVATE ${ARG_DEPS} imgui::imgui implot::implot)
-  if(WIN32 AND TARGET ${ELANORA_BRAINFLOW_TARGET})
+  elanora_copy_runtime_dlls(${NAME})
+endfunction()
+
+# elanora_copy_runtime_dlls(<target>)
+# Places BoardController.dll and friends beside the executable. Without this the
+# program builds fine and then dies at launch with 0xC0000135 (DLL not found),
+# which gives no hint about what is missing.
+function(elanora_copy_runtime_dlls NAME)
+  if(WIN32 AND ELANORA_WITH_BRAINFLOW AND ELANORA_BRAINFLOW_DLL_DIR)
     add_custom_command(TARGET ${NAME} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-              $<TARGET_RUNTIME_DLLS:${NAME}> $<TARGET_FILE_DIR:${NAME}>
-      COMMAND_EXPAND_LISTS
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
+              "${ELANORA_BRAINFLOW_DLL_DIR}" "$<TARGET_FILE_DIR:${NAME}>"
+      COMMENT "Copying BrainFlow runtime libraries beside ${NAME}"
     )
   endif()
 endfunction()

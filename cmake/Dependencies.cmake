@@ -140,6 +140,27 @@ if(ELANORA_WITH_BRAINFLOW)
     GIT_SHALLOW    TRUE
   )
   FetchContent_MakeAvailable(brainflow)
+
+  # BrainFlow's own targets do not export their include directories, and the
+  # C++ API headers are spread across five directories rather than one. Wrap
+  # that up once here so every module can just link elanora::brainflow.
+  add_library(elanora_brainflow INTERFACE)
+  target_link_libraries(elanora_brainflow INTERFACE ${ELANORA_BRAINFLOW_TARGET})
+  target_include_directories(elanora_brainflow SYSTEM INTERFACE
+    ${brainflow_SOURCE_DIR}/cpp_package/src/inc      # board_shim.h, data_filter.h
+    ${brainflow_SOURCE_DIR}/src/utils/inc            # brainflow_array/constants/exception
+    ${brainflow_SOURCE_DIR}/src/board_controller/inc # board_controller.h, input_params
+    ${brainflow_SOURCE_DIR}/src/data_handler/inc     # data_handler.h
+    ${brainflow_SOURCE_DIR}/src/ml/inc               # brainflow_model_params.h
+    ${brainflow_SOURCE_DIR}/third_party/json         # json.hpp
+  )
+  add_library(elanora::brainflow ALIAS elanora_brainflow)
+
+  # BrainFlow writes its shared libraries into its own source tree rather than
+  # the build tree, so $<TARGET_RUNTIME_DLLS> does not find them. Record the
+  # location for elanora_copy_runtime_dlls() in the top-level CMakeLists.
+  set(ELANORA_BRAINFLOW_DLL_DIR "${brainflow_SOURCE_DIR}/compiled/$<CONFIG>"
+      CACHE INTERNAL "Directory holding BoardController.dll and friends")
 endif()
 
 # ---------------------------------------------------------------------------
