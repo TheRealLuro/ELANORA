@@ -29,4 +29,11 @@ if(ELANORA_BUILD_APPS)
       imgui::imgui
       implot::implot
   )
+
+  # Not a unit test: opens a real window to verify GLFW, the GL context and the
+  # ImGui/ImPlot backends initialise and tear down. Run with --frames N in CI.
+  elanora_add_app(ui_smoke
+    SOURCES app/ui_smoke_main.cpp
+    DEPS    elanora_ui
+  )
 endif()

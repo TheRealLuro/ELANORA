@@ -55,17 +55,29 @@ Binaries land in `build/bin/`.
 
 ## Status
 
-Milestone 0 (foundation) is scaffolded: build system, shared types, CSV layer
-and their tests. **Nothing has been compiled or run yet** — no C++ toolchain was
-present on the development machine when this was written, so every test below
-is unverified and should be treated as a hypothesis until `ctest` passes.
+Milestone 0 (foundation) is **complete and verified**: configured, compiled
+warning-free under `/W4`, and all 15 tests pass. The GUI stack is verified by
+`ui_smoke`, which opens a real window, renders through ImGui and ImPlot, and
+tears down cleanly.
+
+Verified toolchain: MSVC 19.44 (VS 2022 BuildTools), CMake 4.x, Windows SDK
+10.0.26100.
 
 | Milestone | State |
 |---|---|
-| 0 Foundation | Written, unverified |
+| 0 Foundation | **Verified** — 15/15 tests pass, `ui_smoke` runs |
 | 1 Device layer | Not started |
 | 2 Collector | Not started |
 | 3 Features | Not started |
 | 4 Evidence gate | Not started |
 | 5 Models | Not started |
 | 6 Optimizer | Not started |
+
+## Running the checks
+
+```bash
+cmake -B build -S .
+cmake --build build --config Debug
+ctest --test-dir build -C Debug --output-on-failure
+./build/bin/Debug/ui_smoke --frames 60
+```
