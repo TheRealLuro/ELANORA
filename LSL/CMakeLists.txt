@@ -4,6 +4,7 @@ if(ELANORA_WITH_BRAINFLOW)
   elanora_add_lib(elanora_lsl
     SOURCES
       src/muse_device.cpp
+      src/stream_recorder.cpp
     DEPS
       elanora_common
       elanora::brainflow
@@ -12,6 +13,7 @@ if(ELANORA_WITH_BRAINFLOW)
   elanora_add_tests(test_lsl
     SOURCES
       tests/test_muse_device.cpp
+      tests/test_stream_recorder.cpp
     DEPS
       elanora_lsl
   )
