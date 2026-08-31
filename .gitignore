@@ -1,0 +1,28 @@
+# Build output
+build/
+out/
+cmake-build-*/
+
+# Recorded data: raw recordings are large and subject-identifiable.
+# Schema docs and fixtures are tracked; real recordings are not.
+data/datasets/raw/
+data/datasets/features/
+data/datasets/ml/
+data/datasets/analysis/
+data/datasets/*.csv
+
+# Trained model parameters are regenerable from the datasets
+models/trained/*
+!models/trained/.gitkeep
+
+# Vendored single-header dependency (fetched by script, not committed)
+collector/third_party/miniaudio.h
+
+# MSVC / VS
+.vs/
+*.user
+*.aps
+*.pdb
+*.ilk
+*.obj
+*.exe
