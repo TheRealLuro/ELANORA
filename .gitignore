@@ -26,3 +26,6 @@ collector/third_party/miniaudio.h
 *.ilk
 *.obj
 *.exe
+
+# ImGui writes window layout state next to the working directory at runtime
+imgui.ini
