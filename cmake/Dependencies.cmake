@@ -76,9 +76,12 @@ if(ELANORA_BUILD_APPS)
   # ---------------------------------------------------------------------------
   # Dear ImGui (docking branch) -- ships no CMake target, so one is defined here.
   # ---------------------------------------------------------------------------
+  # Pinned to a tag, not the moving 'docking' branch: an unpinned branch means
+  # a dependency can change under you between two clean checkouts of the same
+  # commit. v1.90.9 is the version ImPlot v0.16 below was released against.
   FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        docking
+    GIT_TAG        v1.90.9-docking
     GIT_SHALLOW    TRUE
   )
   FetchContent_MakeAvailable(imgui)
@@ -102,6 +105,8 @@ if(ELANORA_BUILD_APPS)
   # ---------------------------------------------------------------------------
   # ImPlot -- live signal plots. Also ships no CMake target.
   # ---------------------------------------------------------------------------
+  # v0.16 pairs with ImGui v1.90.x. Bumping one without the other is the most
+  # likely source of a sudden wall of compile errors in this file.
   FetchContent_Declare(implot
     GIT_REPOSITORY https://github.com/epezent/implot.git
     GIT_TAG        v0.16
