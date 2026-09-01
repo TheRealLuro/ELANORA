@@ -74,8 +74,17 @@ struct PsdGuard {
 
 // Relative band power for one channel, using the same BrainFlow calls the
 // feature pipeline will use, so the monitor and the dataset cannot disagree.
-std::array<double, kBandCount> relative_bands(std::vector<double> samples, int sr) {
-    std::array<double, kBandCount> out{};
+struct SpectrumResult {
+    std::array<double, kBandCount> bands{};
+    std::vector<double> psd;      // linear magnitude, index * bin_hz = frequency
+    double bin_hz = 0.0;
+    double peak_hz = 0.0;
+};
+
+// One transform serves both the band bars and the spectrum plot, so the two
+// panels can never disagree about what the signal contains.
+SpectrumResult analyse(std::vector<double> samples, int sr) {
+    SpectrumResult out;
     constexpr int kNfft = 256;
     if (static_cast<int>(samples.size()) < kNfft || sr <= 0) return out;
 
@@ -93,10 +102,14 @@ std::array<double, kBandCount> relative_bands(std::vector<double> samples, int s
                                           kNfft, kNfft / 2, sr,
                                           static_cast<int>(WindowOperations::HANNING), &len);
         if (len <= 0) return out;
-        double total = DataFilter::get_band_power(g.psd, len, kAnalysisLowHz, kAnalysisHighHz);
+        out.bin_hz = static_cast<double>(sr) / kNfft;
+        out.psd.assign(g.psd.first, g.psd.first + len);
+
+        const double total =
+            DataFilter::get_band_power(g.psd, len, kAnalysisLowHz, kAnalysisHighHz);
         if (total <= 0.0) return out;
         for (int b = 0; b < kBandCount; ++b) {
-            out[static_cast<std::size_t>(b)] =
+            out.bands[static_cast<std::size_t>(b)] =
                 DataFilter::get_band_power(g.psd, len, kBandEdges[b][0], kBandEdges[b][1]) / total;
         }
     } catch (const BrainFlowException&) {
@@ -110,7 +123,7 @@ void plot_lanes(const char* id, const std::vector<Sample>& win,
                 const theme::Rgba* colors, int n,
                 const DisplaySettings& disp, int sr, float height,
                 bool apply_filters, double units_full_scale,
-                int* dropped_out) {
+                int* dropped_out, float gutter = 0.0f) {
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const float width = ImGui::GetContentRegionAvail().x;
     if (width < 4.0f) return;
@@ -139,11 +152,11 @@ void plot_lanes(const char* id, const std::vector<Sample>& win,
         const float mid = top + lane_h * 0.5f;
 
         // Centre line for this lane, and a fainter separator between lanes.
-        dl->AddLine(ImVec2(origin.x, std::round(mid) + 0.5f),
+        dl->AddLine(ImVec2(origin.x + gutter, std::round(mid) + 0.5f),
                     ImVec2(origin.x + width, std::round(mid) + 0.5f),
                     ImGui::GetColorU32(v4(theme::kLine)), 1.0f);
         if (i > 0) {
-            dl->AddLine(ImVec2(origin.x, std::round(top) + 0.5f),
+            dl->AddLine(ImVec2(origin.x + gutter, std::round(top) + 0.5f),
                         ImVec2(origin.x + width, std::round(top) + 0.5f),
                         ImGui::GetColorU32(ImVec4(theme::kLine.r, theme::kLine.g,
                                                   theme::kLine.b, 0.45f)), 1.0f);
@@ -153,7 +166,8 @@ void plot_lanes(const char* id, const std::vector<Sample>& win,
         if (sig.empty()) continue;
         if (apply_filters) sig = display_chain(sig, sr, disp);
 
-        dropped += draw_trace_minmax(sig, ImVec2(origin.x, top), ImVec2(width, lane_h),
+        dropped += draw_trace_minmax(sig, ImVec2(origin.x + gutter, top),
+                                     ImVec2(width - gutter, lane_h),
                                      units_full_scale,
                                      colors ? colors[i] : theme::kAccent, true);
 
@@ -238,7 +252,6 @@ int main(int argc, char** argv) {
     };
     if (autoconnect) do_connect();
 
-    std::array<double, kBandCount> bands{};
     double bands_at = 0.0;
     int dropped_samples = 0;
 
@@ -299,32 +312,177 @@ int main(int argc, char** argv) {
             end_card();
         } else { end_card(); }
 
-        // ---- row 1: device / electrodes / band power -----------------------
-        const float avail = ImGui::GetContentRegionAvail().x;
+        // ---- EEG: the primary panel, given the space it deserves ----------
         const float gap = theme::kS3;
-        const float col3 = (avail - gap * 2.0f) / 3.0f;
-        const float row1_h = 168.0f;
+        const float lower_h = 210.0f;
+        const float mid_h   = 214.0f;
+        const float eeg_h = std::max(200.0f,
+            ImGui::GetContentRegionAvail().y - lower_h - mid_h - gap * 2.0f);
 
-        if (begin_card("##devcard", ImVec2(col3, row1_h))) {
-            eyebrow("Buffered");
-            ImGui::Spacing();
-            char buf[32];
-            std::snprintf(buf, sizeof(buf), "%.0f",
-                          static_cast<double>(recorder.size(BrainFlowPresets::DEFAULT_PRESET)));
-            readout(buf, "EEG SAMPLES");
-            ImGui::Spacing();
-            text_mono(theme::kMuted, "IMU  %zu", recorder.size(BrainFlowPresets::AUXILIARY_PRESET));
-            text_mono(theme::kMuted, "PPG  %zu", recorder.size(BrainFlowPresets::ANCILLARY_PRESET));
-            if (dropped_samples > 0) {
-                text_mono(theme::kWarn, "%d dropped", dropped_samples);
-            } else {
-                text_mono(theme::kFaint, "no dropouts");
+        // Recomputed once per interval and shared by every panel below, so the
+        // spectrum, the matrix and the bars all describe the same window.
+        static std::array<SpectrumResult, kSensorCount> spec{};
+        static int focus_sensor = 1;                      // AF7 by default
+        const double now_t = ImGui::GetTime();
+        if (now_t - bands_at > 0.15) {
+            bands_at = now_t;
+            for (int i = 0; i < kSensorCount; ++i) {
+                if (i < static_cast<int>(ch.eeg.size())) {
+                    spec[static_cast<std::size_t>(i)] =
+                        analyse(channel_of(eeg_win, ch.eeg[static_cast<std::size_t>(i)]),
+                                ch.sr_eeg);
+                }
+            }
+        }
+
+        if (begin_card("##eegcard", ImVec2(0, eeg_h))) {
+            eyebrow("EEG");
+            ImGui::SameLine();
+            right_align(600.0f);
+
+            text_mono(theme::kFaint, "uV/div");
+            ImGui::SameLine(0.0f, theme::kS2);
+            for (double uv : {50.0, 100.0, 200.0}) {
+                const bool on = std::abs(display.uv_per_div - uv) < 0.5;
+                if (on) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, v4(theme::kAccent));
+                    ImGui::PushStyleColor(ImGuiCol_Text, v4(theme::kGround));
+                }
+                char lbl[16];
+                std::snprintf(lbl, sizeof(lbl), "%.0f", uv);
+                if (ImGui::SmallButton(lbl)) display.uv_per_div = uv;
+                if (on) ImGui::PopStyleColor(2);
+                ImGui::SameLine(0.0f, theme::kS1);
+            }
+            ImGui::SameLine(0.0f, theme::kS3);
+            ImGui::Checkbox("HP 0.5Hz", &display.highpass);
+            ImGui::SameLine(0.0f, theme::kS2);
+            ImGui::Checkbox("Notch 60", &display.notch);
+
+            static const char* kEegLabels[] = {"TP9", "AF7", "AF8", "TP10"};
+            static const theme::Rgba kEegColors[] = {
+                theme::kTheta, theme::kAlpha, theme::kBeta, theme::kGamma};
+
+            constexpr float kGutter = 52.0f;   // label + calibration column
+            const float axis_h = ImGui::GetTextLineHeight() + 4.0f;
+
+            const ImVec2 plot_origin = ImGui::GetCursorScreenPos();
+            const float plot_w = ImGui::GetContentRegionAvail().x;
+            const float caption_h = ImGui::GetTextLineHeight() + 2.0f;
+            const float plot_h = ImGui::GetContentRegionAvail().y - theme::kS2 - axis_h - caption_h;
+
+            // Grid first so the traces sit on top of it, and only across the
+            // trace area -- gridlines through the label gutter read as noise.
+            draw_time_grid(ImVec2(plot_origin.x + kGutter, plot_origin.y),
+                           ImVec2(plot_w - kGutter, plot_h), kWindowSeconds, 1.0);
+
+            plot_lanes("eeg", eeg_win, ch.eeg, kEegLabels, kEegColors, kSensorCount,
+                       display, ch.sr_eeg, plot_h,
+                       true, display.uv_per_div * 2.0, &dropped_samples, kGutter);
+
+            // Calibration mark lives in the gutter, clear of every trace.
+            draw_scale_bar(ImVec2(plot_origin.x + 30.0f, plot_origin.y),
+                           plot_h / kSensorCount, display.uv_per_div, theme::kMuted);
+
+            ImGui::Dummy(ImVec2(1.0f, axis_h));
+
+            text_mono(theme::kFaint,
+                      "min/max decimation   %.0f uV/div   %s   %s   %.0f s   %s",
+                      display.uv_per_div,
+                      display.highpass ? "HP 0.5 Hz" : "HP off",
+                      display.notch ? "notch 60 Hz" : "notch off",
+                      kWindowSeconds,
+                      dropped_samples > 0 ? "DROPPED SAMPLES" : "no dropouts");
+        }
+        end_card();
+
+        // ---- spectrum | band matrix | electrodes ---------------------------
+        const float avail  = ImGui::GetContentRegionAvail().x;
+        const float w_spec = (avail - gap * 2.0f) * 0.30f;
+        const float w_mtx  = (avail - gap * 2.0f) * 0.42f;
+        const float w_el   = (avail - gap * 2.0f) * 0.28f;
+
+        if (begin_card("##speccard", ImVec2(w_spec, mid_h))) {
+            eyebrow("Spectrum");
+            ImGui::SameLine();
+            right_align(160.0f);
+            text_mono(theme::kFaint, "%s   peak %.0f Hz",
+                      electrode_name(static_cast<SensorId>(focus_sensor)),
+                      spec[static_cast<std::size_t>(focus_sensor)].peak_hz);
+
+            const ImVec2 o = ImGui::GetCursorScreenPos();
+            const ImVec2 sz(ImGui::GetContentRegionAvail().x,
+                            ImGui::GetContentRegionAvail().y - 4.0f);
+            auto& sp = spec[static_cast<std::size_t>(focus_sensor)];
+            if (!sp.psd.empty()) {
+                double peak = 0.0;
+                draw_spectrum(sp.psd.data(), static_cast<int>(sp.psd.size()), sp.bin_hz,
+                              o, sz, kAnalysisHighHz, &peak);
+                sp.peak_hz = peak;
+            }
+            ImGui::Dummy(sz);
+        }
+        end_card();
+
+        ImGui::SameLine(0.0f, gap);
+        if (begin_card("##mtxcard", ImVec2(w_mtx, mid_h))) {
+            eyebrow("Relative band power");
+            ImGui::SameLine();
+            right_align(190.0f);
+            text_mono(theme::kFaint, "click a row to focus");
+
+            // This 4x5 grid IS the measurement: four brain models, five bands
+            // each. Showing one sensor at a time hides three quarters of it.
+            const float label_w = 48.0f;
+            const float grid_w  = ImGui::GetContentRegionAvail().x - label_w;
+            const float cell_w  = (grid_w - theme::kS1 * (kBandCount - 1)) / kBandCount;
+            const float head_h  = ImGui::GetTextLineHeight() + 3.0f;
+            const float cell_h  =
+                (ImGui::GetContentRegionAvail().y - head_h - theme::kS1 * kSensorCount) /
+                kSensorCount;
+
+            const ImVec2 head_origin = ImGui::GetCursorScreenPos();
+            ImDrawList* hdl = ImGui::GetWindowDrawList();
+            if (fonts().mono) ImGui::PushFont(fonts().mono);
+            for (int b = 0; b < kBandCount; ++b) {
+                const char* nm = band_name(static_cast<Band>(b));
+                const ImVec2 ts = ImGui::CalcTextSize(nm);
+                hdl->AddText(ImVec2(head_origin.x + label_w + (cell_w + theme::kS1) * b +
+                                        (cell_w - ts.x) * 0.5f,
+                                    head_origin.y),
+                             ImGui::GetColorU32(v4(theme::band_color(b))), nm);
+            }
+            if (fonts().mono) ImGui::PopFont();
+            ImGui::Dummy(ImVec2(1.0f, head_h));
+
+            for (int r = 0; r < kSensorCount; ++r) {
+                const auto& row = spec[static_cast<std::size_t>(r)].bands;
+                int dom = 0;
+                for (int b = 1; b < kBandCount; ++b) {
+                    if (row[static_cast<std::size_t>(b)] >
+                        row[static_cast<std::size_t>(dom)]) dom = b;
+                }
+                const ImVec2 ro = ImGui::GetCursorScreenPos();
+
+                if (fonts().mono) ImGui::PushFont(fonts().mono);
+                ImGui::TextColored(v4(r == focus_sensor ? theme::kText : theme::kMuted),
+                                   "%s", electrode_name(static_cast<SensorId>(r)));
+                if (fonts().mono) ImGui::PopFont();
+                if (ImGui::IsItemClicked()) focus_sensor = r;
+
+                for (int b = 0; b < kBandCount; ++b) {
+                    band_cell(ImVec2(ro.x + label_w + (cell_w + theme::kS1) * b, ro.y),
+                              ImVec2(cell_w, cell_h),
+                              row[static_cast<std::size_t>(b)],
+                              theme::band_color(b), b == dom);
+                }
+                ImGui::SetCursorScreenPos(ImVec2(ro.x, ro.y + cell_h + theme::kS1));
             }
         }
         end_card();
 
         ImGui::SameLine(0.0f, gap);
-        if (begin_card("##elcard", ImVec2(col3, row1_h))) {
+        if (begin_card("##elcard", ImVec2(w_el, mid_h))) {
             eyebrow("Electrode integrity");
             ImGui::Spacing();
 
@@ -338,110 +496,36 @@ int main(int argc, char** argv) {
                 }
                 if (q[static_cast<std::size_t>(i)].q != Quality::Bad) ++usable;
             }
-            char cnt[8]; std::snprintf(cnt, sizeof(cnt), "%d", usable);
+            char cnt[8];
+            std::snprintf(cnt, sizeof(cnt), "%d", usable);
             readout(cnt, "OF 4 USABLE",
                     usable == kSensorCount ? theme::kText : theme::kWarn);
             ImGui::Spacing();
 
-            const float chip_w = (ImGui::GetContentRegionAvail().x - theme::kS1 * 3.0f) / 4.0f;
             for (int i = 0; i < kSensorCount; ++i) {
-                if (i) ImGui::SameLine(0.0f, theme::kS1);
                 const auto& cq = q[static_cast<std::size_t>(i)];
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, v4(theme::kRaised));
-                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme::kRadiusSm);
-                char chip_id[16];
-                std::snprintf(chip_id, sizeof(chip_id), "##chip%d", i);
-                ImGui::BeginChild(chip_id, ImVec2(chip_w, 46.0f),
-                                  ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
-                // State reaches the chip as a stripe AND a number, so it does
-                // not depend on colour vision or on reading fine text.
+                const ImVec2 p0 = ImGui::GetCursorScreenPos();
+                const float w = ImGui::GetContentRegionAvail().x;
+                const float h = 26.0f;
                 ImDrawList* dl = ImGui::GetWindowDrawList();
-                const ImVec2 p = ImGui::GetWindowPos();
-                dl->AddRectFilled(p, ImVec2(p.x + 2.0f, p.y + 46.0f),
+                dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h),
+                                  ImGui::GetColorU32(v4(theme::kRaised)), theme::kRadiusSm);
+                dl->AddRectFilled(p0, ImVec2(p0.x + 2.0f, p0.y + h),
                                   ImGui::GetColorU32(v4(quality_color(cq.q))));
-                ImGui::SetCursorPos(ImVec2(theme::kS2, 5.0f));
-                text_mono(theme::kDim, "%s", electrode_name(static_cast<SensorId>(i)));
-                ImGui::SetCursorPosX(theme::kS2);
-                text_mono(quality_color(cq.q), "%.0f uV", cq.rms_uv);
-                ImGui::EndChild();
-                ImGui::PopStyleVar();
-                ImGui::PopStyleColor();
-            }
-        }
-        end_card();
-
-        ImGui::SameLine(0.0f, gap);
-        if (begin_card("##bandcard", ImVec2(col3, row1_h))) {
-            eyebrow("Band power");
-            ImGui::SameLine();
-            right_align(90.0f);
-            text_mono(theme::kFaint, "AF7 rel.");
-            ImGui::Spacing();
-
-            const double now = ImGui::GetTime();
-            if (now - bands_at > 0.15 && ch.eeg.size() > 1) {
-                bands_at = now;
-                bands = relative_bands(channel_of(eeg_win, ch.eeg[1]), ch.sr_eeg);
-            }
-            for (int b = 0; b < kBandCount; ++b) {
-                const auto col = theme::band_color(b);
+                ImGui::SetCursorScreenPos(ImVec2(p0.x + theme::kS2, p0.y + 4.0f));
                 if (fonts().mono) ImGui::PushFont(fonts().mono);
-                ImGui::TextColored(v4(col), "%-6s", band_name(static_cast<Band>(b)));
+                ImGui::TextColored(v4(theme::kDim), "%-5s",
+                                   electrode_name(static_cast<SensorId>(i)));
+                ImGui::SameLine(0.0f, theme::kS2);
+                ImGui::TextColored(v4(quality_color(cq.q)), "%6.1f uV", cq.rms_uv);
+                ImGui::SameLine(0.0f, theme::kS2);
+                ImGui::TextColored(v4(quality_color(cq.q)), "%s",
+                                   cq.flat ? "no contact"
+                                   : cq.railed ? "saturated"
+                                   : quality_name(cq.q));
                 if (fonts().mono) ImGui::PopFont();
-                ImGui::SameLine(72.0f);
-                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, v4(col));
-                ImGui::PushStyleColor(ImGuiCol_FrameBg, v4(theme::kRaised));
-                char ov[16];
-                std::snprintf(ov, sizeof(ov), "%.2f", bands[static_cast<std::size_t>(b)]);
-                ImGui::ProgressBar(static_cast<float>(bands[static_cast<std::size_t>(b)]),
-                                   ImVec2(-1.0f, 12.0f), ov);
-                ImGui::PopStyleColor(2);
+                ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + h + theme::kS1));
             }
-        }
-        end_card();
-
-        // ---- EEG -----------------------------------------------------------
-        const float lower_h = 236.0f;
-        const float eeg_h = std::max(180.0f,
-            ImGui::GetContentRegionAvail().y - lower_h - gap * 2.0f);
-
-        if (begin_card("##eegcard", ImVec2(0, eeg_h))) {
-            eyebrow("EEG");
-            ImGui::SameLine();
-            right_align(560.0f);
-
-            text_mono(theme::kFaint, "uV/div");
-            ImGui::SameLine(0.0f, theme::kS2);
-            for (double uv : {50.0, 100.0, 200.0}) {
-                const bool on = std::abs(display.uv_per_div - uv) < 0.5;
-                if (on) ImGui::PushStyleColor(ImGuiCol_Button, v4(theme::kAccent));
-                char lbl[16]; std::snprintf(lbl, sizeof(lbl), "%.0f", uv);
-                if (ImGui::SmallButton(lbl)) display.uv_per_div = uv;
-                if (on) ImGui::PopStyleColor();
-                ImGui::SameLine(0.0f, theme::kS1);
-            }
-            ImGui::SameLine(0.0f, theme::kS3);
-            ImGui::Checkbox("HP 0.5Hz", &display.highpass);
-            ImGui::SameLine(0.0f, theme::kS2);
-            ImGui::Checkbox("Notch 60", &display.notch);
-
-            static const char* kEegLabels[] = {"TP9", "AF7", "AF8", "TP10"};
-            static const theme::Rgba kEegColors[] = {
-                theme::kTheta, theme::kAlpha, theme::kBeta, theme::kGamma};
-
-            // Full scale is two divisions per lane. Values are BrainFlow
-            // microvolts, so this is a real sensitivity, not a fudge factor.
-            plot_lanes("eeg", eeg_win, ch.eeg, kEegLabels, kEegColors, kSensorCount,
-                       display, ch.sr_eeg,
-                       ImGui::GetContentRegionAvail().y - theme::kS2,
-                       true, display.uv_per_div * 2.0, &dropped_samples);
-
-            text_mono(theme::kFaint,
-                      "min/max decimation  %.0f uV/div  %s  %s  %.0f s window",
-                      display.uv_per_div,
-                      display.highpass ? "HP 0.5 Hz" : "HP off",
-                      display.notch ? "notch 60 Hz" : "notch off",
-                      kWindowSeconds);
         }
         end_card();
 

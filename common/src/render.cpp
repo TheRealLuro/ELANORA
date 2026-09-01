@@ -1,5 +1,7 @@
 #include "elanora/render.hpp"
 
+#include "elanora/types.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -136,6 +138,152 @@ int draw_trace_minmax(const std::vector<double>& samples,
     }
     flush();
     return nan_count;
+}
+
+void draw_time_grid(ImVec2 origin, ImVec2 size, double span_seconds, double div_seconds) {
+    if (span_seconds <= 0.0 || div_seconds <= 0.0 || size.x < 4.0f) return;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const int divs = static_cast<int>(span_seconds / div_seconds);
+
+    for (int d = 0; d <= divs; ++d) {
+        const double t = static_cast<double>(d) * div_seconds;
+        const float x = origin.x + static_cast<float>((t / span_seconds)) * size.x;
+        // "Now" is the right edge; ticks count backwards from it.
+        // Every 2 s. Every 5 left a single label on an 8 s window, which is
+        // not enough reference to read an interval off.
+        const bool major = (divs - d) % 2 == 0;
+        dl->AddLine(ImVec2(std::round(x) + 0.5f, origin.y),
+                    ImVec2(std::round(x) + 0.5f, origin.y + size.y),
+                    u32(theme::kLine, major ? 0.85f : 0.35f), 1.0f);
+
+        if (major && d < divs) {
+            char lbl[16];
+            std::snprintf(lbl, sizeof(lbl), "-%.0fs", span_seconds - t);
+            if (fonts().mono) ImGui::PushFont(fonts().mono);
+            // Below the plot body, never inside it: a label drawn over the
+            // bottom lane is unreadable and hides signal at the same time.
+            dl->AddText(ImVec2(x + 3.0f, origin.y + size.y + 2.0f),
+                        u32(theme::kFaint), lbl);
+            if (fonts().mono) ImGui::PopFont();
+        }
+    }
+}
+
+void draw_scale_bar(ImVec2 origin, float lane_height, double uv_per_div,
+                    theme::Rgba color) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    // One division is half a lane, matching draw_trace_minmax's full-scale of
+    // two divisions per lane.
+    const float h = lane_height * 0.5f;
+    const float x = origin.x + 6.0f;
+    const float y0 = origin.y + lane_height * 0.5f - h * 0.5f;
+
+    dl->AddLine(ImVec2(x, y0), ImVec2(x, y0 + h), u32(color, 0.8f), 1.5f);
+    dl->AddLine(ImVec2(x - 3.0f, y0), ImVec2(x + 3.0f, y0), u32(color, 0.8f), 1.5f);
+    dl->AddLine(ImVec2(x - 3.0f, y0 + h), ImVec2(x + 3.0f, y0 + h), u32(color, 0.8f), 1.5f);
+
+    (void)uv_per_div;   // the caption under the plot states the sensitivity
+}
+
+void draw_spectrum(const double* mags, int n_bins, double bin_hz,
+                   ImVec2 origin, ImVec2 size, double f_max,
+                   double* peak_hz_out) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (mags == nullptr || n_bins <= 2 || size.x < 8.0f || f_max <= 0.0) return;
+
+    const float label_h = ImGui::GetTextLineHeight() + 2.0f;
+    const float plot_h = size.y - label_h;
+
+    // Band regions behind the curve.
+    for (int b = 0; b < 5; ++b) {
+        const double lo = kBandEdges[static_cast<std::size_t>(b)][0];
+        const double hi = kBandEdges[static_cast<std::size_t>(b)][1];
+        const float x0 = origin.x + static_cast<float>(lo / f_max) * size.x;
+        const float x1 = origin.x + static_cast<float>(std::min(hi, f_max) / f_max) * size.x;
+        const auto col = theme::band_color(b);
+        dl->AddRectFilled(ImVec2(x0, origin.y), ImVec2(x1, origin.y + plot_h), u32(col, 0.07f));
+        dl->AddLine(ImVec2(std::round(x0) + 0.5f, origin.y),
+                    ImVec2(std::round(x0) + 0.5f, origin.y + plot_h), u32(theme::kLine, 0.6f));
+        if (fonts().mono) ImGui::PushFont(fonts().mono);
+        const char* nm = band_name(static_cast<Band>(b));
+        if (ImGui::CalcTextSize(nm).x + 6.0f < (x1 - x0)) {
+            dl->AddText(ImVec2(x0 + 3.0f, origin.y + plot_h + 1.0f), u32(col, 0.75f), nm);
+        }
+        if (fonts().mono) ImGui::PopFont();
+    }
+
+    // dB, because the 1/f slope of real EEG is a straight line in log and an
+    // uninformative cliff in linear.
+    const int last = std::min(n_bins - 1, static_cast<int>(f_max / bin_hz));
+    if (last < 2) return;
+    double lo_db = 1e30, hi_db = -1e30;
+    std::vector<double> db(static_cast<std::size_t>(last));
+    for (int k = 1; k <= last; ++k) {
+        const double v = 20.0 * std::log10(mags[k] + 1e-12);
+        db[static_cast<std::size_t>(k - 1)] = v;
+        lo_db = std::min(lo_db, v);
+        hi_db = std::max(hi_db, v);
+    }
+    const double range = std::max(hi_db - lo_db, 1.0);
+
+    std::vector<ImVec2> pts;
+    pts.reserve(static_cast<std::size_t>(last) + 2u);
+    int peak_k = 1; double peak_v = -1e30;
+    for (int k = 1; k <= last; ++k) {
+        const double v = db[static_cast<std::size_t>(k - 1)];
+        // Ignore the lowest bins when hunting the peak: 1/f always wins there
+        // and would report "peak 1 Hz" on every recording ever made.
+        if (k * bin_hz >= 4.0 && v > peak_v) { peak_v = v; peak_k = k; }
+        const float x = origin.x + static_cast<float>((k * bin_hz) / f_max) * size.x;
+        const float y = origin.y + plot_h -
+                        static_cast<float>((v - lo_db) / range) * (plot_h - 4.0f) - 2.0f;
+        pts.push_back(ImVec2(x, y));
+    }
+    if (peak_hz_out) *peak_hz_out = peak_k * bin_hz;
+
+    // Filled area under the curve, then the curve with a glow pass.
+    std::vector<ImVec2> poly = pts;
+    poly.push_back(ImVec2(pts.back().x, origin.y + plot_h));
+    poly.push_back(ImVec2(pts.front().x, origin.y + plot_h));
+    dl->AddConvexPolyFilled(poly.data(), static_cast<int>(poly.size()),
+                            u32(theme::kAccent, 0.10f));
+    dl->AddPolyline(pts.data(), static_cast<int>(pts.size()),
+                    u32(theme::kAccent, 0.16f), ImDrawFlags_None, 4.0f);
+    dl->AddPolyline(pts.data(), static_cast<int>(pts.size()),
+                    u32(theme::kAccent), ImDrawFlags_None, 1.4f);
+
+    // Peak marker.
+    const float px = origin.x + static_cast<float>((peak_k * bin_hz) / f_max) * size.x;
+    dl->AddLine(ImVec2(px, origin.y), ImVec2(px, origin.y + plot_h), u32(theme::kText, 0.28f));
+    dl->AddCircleFilled(ImVec2(px, pts[static_cast<std::size_t>(peak_k - 1)].y), 2.5f,
+                        u32(theme::kText, 0.9f));
+}
+
+void band_cell(ImVec2 pos, ImVec2 size, double value, theme::Rgba color, bool dominant) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float v = static_cast<float>(std::clamp(value, 0.0, 1.0));
+
+    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
+                      u32(theme::kRaised), theme::kRadiusSm);
+    // Opacity encodes magnitude. Floor it slightly so a near-zero band is
+    // still visibly a cell rather than a hole in the grid.
+    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
+                      u32(color, 0.10f + 0.75f * v), theme::kRadiusSm);
+    if (dominant) {
+        dl->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y),
+                    u32(theme::kText, 0.75f), theme::kRadiusSm, 0, 1.5f);
+    }
+
+    char lbl[8];
+    std::snprintf(lbl, sizeof(lbl), "%.2f", value);
+    if (fonts().mono) ImGui::PushFont(fonts().mono);
+    const ImVec2 ts = ImGui::CalcTextSize(lbl);
+    // Flip the label to dark once the fill is bright enough that white text
+    // would fall below a readable contrast ratio.
+    const ImU32 text_col = (v > 0.55f) ? u32(theme::kGround, 0.95f) : u32(theme::kText, 0.9f);
+    dl->AddText(ImVec2(pos.x + (size.x - ts.x) * 0.5f, pos.y + (size.y - ts.y) * 0.5f),
+                text_col, lbl);
+    if (fonts().mono) ImGui::PopFont();
 }
 
 // ---------------------------------------------------------------------------

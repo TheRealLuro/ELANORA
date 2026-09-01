@@ -82,6 +82,32 @@ int draw_trace_minmax(const std::vector<double>& samples,
                       theme::Rgba color,
                       bool glow = true);
 
+// Vertical time gridlines with second labels along the bottom. Without a time
+// reference a trace is a picture; with one it is a measurement -- you can say
+// how long a burst lasted rather than only that it happened.
+void draw_time_grid(ImVec2 origin, ImVec2 size, double span_seconds,
+                    double div_seconds = 1.0);
+
+// Calibration bar: a vertical rule one division tall, labelled in microvolts.
+// Every clinical EEG display carries one, because "100 uV/div" in a caption is
+// far harder to use than a mark you can hold a feature against.
+void draw_scale_bar(ImVec2 origin, float lane_height, double uv_per_div,
+                    theme::Rgba color);
+
+// Power spectral density with the five band regions shaded behind the curve,
+// so the band a peak belongs to is readable without consulting a legend.
+// `mags` is linear magnitude; it is drawn in dB because the 1/f slope of real
+// EEG is a straight line in log and a featureless cliff in linear.
+void draw_spectrum(const double* mags, int n_bins, double bin_hz,
+                   ImVec2 origin, ImVec2 size, double f_max,
+                   double* peak_hz_out);
+
+// One cell of the sensor x band matrix. Fill opacity encodes magnitude, so the
+// grid reads as a heatmap at a glance; the dominant cell in a row gets a
+// border so dominance survives being read in greyscale.
+void band_cell(ImVec2 pos, ImVec2 size, double value, theme::Rgba color,
+               bool dominant);
+
 // ---------------------------------------------------------------------------
 // Card chrome
 //
