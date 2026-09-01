@@ -85,11 +85,14 @@ Fonts& load_fonts() {
 
     // Body first: whichever font is added first becomes ImGui's default, and
     // the default is what every un-pushed widget renders with.
-    g_fonts.body    = load_first(ui_regular(),   15.0f, &g_fonts.bundled);
-    g_fonts.subhead = load_first(ui_medium(),    17.0f, &g_fonts.bundled);
-    g_fonts.display = load_first(ui_light(),     38.0f, &g_fonts.bundled);
-    g_fonts.mono    = load_first(mono_regular(), 13.0f, &g_fonts.bundled);
+    g_fonts.body    = load_first(ui_regular(),   14.0f, &g_fonts.bundled);
+    g_fonts.subhead = load_first(ui_medium(),    18.0f, &g_fonts.bundled);
+    g_fonts.metric  = load_first(ui_light(),     32.0f, &g_fonts.bundled);
+    g_fonts.hero    = load_first(ui_light(),     44.0f, &g_fonts.bundled);
+    g_fonts.mono    = load_first(mono_regular(), 14.0f, &g_fonts.bundled);
+    g_fonts.monoBig = load_first(mono_regular(), 24.0f, &g_fonts.bundled);
     g_fonts.eyebrow = load_first(ui_medium(),    11.0f, &g_fonts.bundled);
+    g_fonts.display = g_fonts.hero;
 
     if (g_fonts.body == nullptr) {
         // No file-backed face anywhere. ProggyClean it is -- ugly, but the app
@@ -97,9 +100,12 @@ Fonts& load_fonts() {
         g_fonts.body = io.Fonts->AddFontDefault();
     }
     if (g_fonts.subhead == nullptr) g_fonts.subhead = g_fonts.body;
-    if (g_fonts.display == nullptr) g_fonts.display = g_fonts.body;
+    if (g_fonts.metric  == nullptr) g_fonts.metric  = g_fonts.body;
+    if (g_fonts.hero    == nullptr) g_fonts.hero    = g_fonts.body;
     if (g_fonts.mono    == nullptr) g_fonts.mono    = g_fonts.body;
+    if (g_fonts.monoBig == nullptr) g_fonts.monoBig = g_fonts.mono;
     if (g_fonts.eyebrow == nullptr) g_fonts.eyebrow = g_fonts.body;
+    g_fonts.display = g_fonts.hero;
 
     io.Fonts->Build();
     return g_fonts;

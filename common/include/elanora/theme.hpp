@@ -28,13 +28,19 @@ void apply_elanora_theme();
 // of an application. load_fonts() builds a four-size ramp, trying bundled Fira
 // first, then system Segoe UI / Consolas, then giving up gracefully.
 // ---------------------------------------------------------------------------
+// Sizes follow a modular scale (12 / 14 / 18 / 24 / 32 / 44). Arbitrary sizes
+// are the thing that makes a layout feel unconsidered even when every element
+// is individually fine.
 struct Fonts {
-    ImFont* body    = nullptr;  // 15px  -- default UI text
-    ImFont* subhead = nullptr;  // 17px  -- card titles
-    ImFont* display = nullptr;  // 38px  -- primary readouts
-    ImFont* mono    = nullptr;  // 13px  -- data, timestamps, channel names
-    ImFont* eyebrow = nullptr;  // 11px  -- uppercase section labels
-    bool    bundled = false;    // true when Fira was found rather than fallback
+    ImFont* eyebrow = nullptr;  // 11  uppercase section labels
+    ImFont* body    = nullptr;  // 14  default UI text
+    ImFont* subhead = nullptr;  // 18  card titles, secondary readouts
+    ImFont* metric  = nullptr;  // 32  card metrics
+    ImFont* hero    = nullptr;  // 44  the one number worth looking at first
+    ImFont* mono    = nullptr;  // 14  aligned numerics
+    ImFont* monoBig = nullptr;  // 24  matrix values
+    ImFont* display = nullptr;  // alias of hero, kept for existing callers
+    bool    bundled = false;
 };
 
 // Must be called before the first frame and after the ImGui context exists.

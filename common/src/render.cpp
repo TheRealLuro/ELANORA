@@ -446,14 +446,13 @@ bool begin_card(const char* id, ImVec2 size) {
         const float h = ImGui::GetWindowHeight();
         dl->PushClipRect(p0, ImVec2(p0.x + w, p0.y + h), true);
 
-        // Top-edge gradient: the card catches a little light at the top.
-        dl->AddRectFilledMultiColor(p0, ImVec2(p0.x + w, p0.y + 52.0f),
-            u32(theme::kPanelHi), u32(theme::kPanelHi),
-            u32(theme::kPanel),   u32(theme::kPanel));
-
-        // A one-pixel lit edge along the top. This is what makes a panel read
-        // as a raised plane rather than a lighter rectangle -- the same trick
-        // a bevel uses, at a thousandth of the visual cost.
+        // No gradient. A 52px wash across the top of a 136px card read as a
+        // separate grey header strip that lined up with nothing, which looked
+        // like a mistake rather than depth.
+        //
+        // A one-pixel lit edge along the top is enough. This is what makes a
+        // panel read as a raised plane rather than a lighter rectangle -- the
+        // same trick a bevel uses, at a thousandth of the visual cost.
         dl->AddLine(ImVec2(p0.x + theme::kRadius, p0.y + 0.5f),
                     ImVec2(p0.x + w - theme::kRadius, p0.y + 0.5f),
                     u32(theme::kLineHi, 0.55f), 1.0f);
