@@ -41,6 +41,15 @@ public:
 
     GLFWwindow* window() const { return window_; }
 
+    // Saves the framebuffer to a PNG. Call between begin_frame and end_frame
+    // and it captures the previous frame; call right after end_frame and it
+    // captures the one just presented.
+    //
+    // Reads this application's own pixels rather than asking the OS to grab a
+    // region of the desktop: a screen grab depends on window ordering, and
+    // captures whatever else happens to be on screen.
+    bool save_screenshot(const char* path) const;
+
     // Background clear colour, matching the theme's window background so there
     // is no flash of a different colour during resize.
     void set_clear_color(float r, float g, float b);

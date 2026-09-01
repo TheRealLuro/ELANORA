@@ -82,9 +82,12 @@ inline constexpr float kS2 = 8.0f;
 inline constexpr float kS3 = 12.0f;
 inline constexpr float kS4 = 16.0f;
 inline constexpr float kS5 = 24.0f;
+inline constexpr float kS6 = 32.0f;
 
-inline constexpr float kRadius   = 8.0f;
-inline constexpr float kRadiusSm = 5.0f;
+// Generous, continuous-feeling radii. Tight corners read as utilitarian
+// chrome; softer ones let the panel recede and the data come forward.
+inline constexpr float kRadius   = 12.0f;
+inline constexpr float kRadiusSm = 8.0f;
 
 // Per-band colour by Band index, so callers do not repeat the mapping.
 const Rgba& band_color(int band_index);

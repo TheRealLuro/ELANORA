@@ -131,14 +131,16 @@ void apply_elanora_theme() {
     s.GrabRounding      = theme::kRadiusSm;
     s.TabRounding       = theme::kRadiusSm;
 
-    s.WindowPadding    = ImVec2(theme::kS4, theme::kS3);
-    s.FramePadding     = ImVec2(theme::kS3, 6.0f);
-    s.ItemSpacing      = ImVec2(theme::kS3, theme::kS2);
+    s.WindowPadding    = ImVec2(theme::kS5, theme::kS4);
+    s.FramePadding     = ImVec2(theme::kS3, 7.0f);
+    s.ItemSpacing      = ImVec2(theme::kS3, theme::kS3);
     s.ItemInnerSpacing = ImVec2(theme::kS2, 6.0f);
     s.CellPadding      = ImVec2(theme::kS2, 5.0f);
 
-    s.WindowBorderSize = 1.0f;
-    s.ChildBorderSize  = 1.0f;
+    // Borders mostly removed. Separation comes from fill contrast and space;
+    // a 1px line around every panel is chrome competing with the content.
+    s.WindowBorderSize = 0.0f;
+    s.ChildBorderSize  = 0.0f;
     s.FrameBorderSize  = 0.0f;
     s.ScrollbarSize    = 11.0f;
     s.GrabMinSize      = 10.0f;

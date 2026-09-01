@@ -252,6 +252,30 @@ if(ELANORA_BUILD_APPS)
     endif()
   endforeach()
 
+  # stb_image_write: lets the apps save their own framebuffer to PNG. Capturing
+  # via the OS screen grabber is unreliable (it captures whatever window happens
+  # to be in front) and reads pixels that are none of this program's business.
+  set(STBIW_HEADER "${CMAKE_SOURCE_DIR}/common/third_party/stb_image_write.h")
+  if(NOT EXISTS "${STBIW_HEADER}")
+    file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/common/third_party")
+    message(STATUS "Downloading stb_image_write.h ...")
+    file(DOWNLOAD
+      "https://raw.githubusercontent.com/nothings/stb/master/stb_image_write.h"
+      "${STBIW_HEADER}" TLS_VERIFY ON STATUS _stb_st)
+    list(GET _stb_st 0 _stb_code)
+    set(_stb_sz 0)
+    if(EXISTS "${STBIW_HEADER}")
+      file(SIZE "${STBIW_HEADER}" _stb_sz)
+    endif()
+    if(NOT _stb_code EQUAL 0 OR _stb_sz LESS 4096)
+      message(WARNING "stb_image_write.h unavailable; --screenshot disabled.")
+      file(REMOVE "${STBIW_HEADER}")
+    endif()
+  endif()
+  if(EXISTS "${STBIW_HEADER}")
+    add_compile_definitions(ELANORA_HAVE_STBIW)
+  endif()
+
   set(MINIAUDIO_HEADER "${CMAKE_SOURCE_DIR}/collector/third_party/miniaudio.h")
   if(NOT EXISTS "${MINIAUDIO_HEADER}")
     message(STATUS "Downloading miniaudio.h ...")

@@ -241,12 +241,14 @@ void draw_spectrum(const double* mags, int n_bins, double bin_hz,
     }
     if (peak_hz_out) *peak_hz_out = peak_k * bin_hz;
 
-    // Filled area under the curve, then the curve with a glow pass.
-    std::vector<ImVec2> poly = pts;
-    poly.push_back(ImVec2(pts.back().x, origin.y + plot_h));
-    poly.push_back(ImVec2(pts.front().x, origin.y + plot_h));
-    dl->AddConvexPolyFilled(poly.data(), static_cast<int>(poly.size()),
-                            u32(theme::kAccent, 0.10f));
+    // Area fill drawn as one vertical line per point. AddConvexPolyFilled was
+    // wrong here and looked it: a spectrum curve is not convex, and feeding a
+    // concave outline to it produces spurious triangles fanning across the plot.
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        dl->AddLine(ImVec2(pts[i].x, pts[i].y),
+                    ImVec2(pts[i].x, origin.y + plot_h),
+                    u32(theme::kAccent, 0.11f), 1.6f);
+    }
     dl->AddPolyline(pts.data(), static_cast<int>(pts.size()),
                     u32(theme::kAccent, 0.16f), ImDrawFlags_None, 4.0f);
     dl->AddPolyline(pts.data(), static_cast<int>(pts.size()),
@@ -287,6 +289,122 @@ void band_cell(ImVec2 pos, ImVec2 size, double value, theme::Rgba color, bool do
 }
 
 // ---------------------------------------------------------------------------
+// Motion
+// ---------------------------------------------------------------------------
+
+double smooth_to(double current, double target, float dt, double tau) {
+    if (tau <= 0.0 || dt <= 0.0f) return target;
+    // Exponential approach. Using exp() rather than a fixed per-frame fraction
+    // keeps the settling time identical at 60 Hz and at 144 Hz.
+    const double a = 1.0 - std::exp(-static_cast<double>(dt) / tau);
+    const double next = current + (target - current) * a;
+    // Snap once the remaining distance is invisible, so values settle exactly
+    // rather than creeping forever and re-rendering every frame.
+    return (std::abs(target - next) < 1e-4) ? target : next;
+}
+
+theme::Rgba lerp_color(theme::Rgba a, theme::Rgba b, float t) {
+    t = std::clamp(t, 0.0f, 1.0f);
+    return theme::Rgba{ a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
+                        a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t };
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+bool segmented(const char* id, const char* const* labels, int count,
+               int* current, float width) {
+    if (count <= 0 || current == nullptr) return false;
+
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImGuiStorage* store = ImGui::GetStateStorage();
+    const ImGuiID base = win->GetID(id);
+
+    const float pad = 3.0f;
+    const float h = ImGui::GetFontSize() + pad * 2.0f + 6.0f;
+    float w = width;
+    if (w <= 0.0f) {
+        w = pad * 2.0f;
+        for (int i = 0; i < count; ++i) w += ImGui::CalcTextSize(labels[i]).x + 24.0f;
+    }
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float seg_w = (w - pad * 2.0f) / static_cast<float>(count);
+
+    ImGui::InvisibleButton(id, ImVec2(w, h));
+    const bool hovered = ImGui::IsItemHovered();
+    bool changed = false;
+    if (ImGui::IsItemActive() || ImGui::IsItemClicked()) {
+        const float local = ImGui::GetIO().MousePos.x - pos.x - pad;
+        const int idx = std::clamp(static_cast<int>(local / seg_w), 0, count - 1);
+        if (ImGui::IsItemClicked() && idx != *current) { *current = idx; changed = true; }
+    }
+
+    // The indicator eases toward the selected segment, so the control shows
+    // which direction the selection moved rather than teleporting.
+    const ImGuiID anim_id = base + 1;
+    float anim = store->GetFloat(anim_id, static_cast<float>(*current));
+    anim = static_cast<float>(smooth_to(anim, static_cast<double>(*current),
+                                        ImGui::GetIO().DeltaTime, 0.09));
+    store->SetFloat(anim_id, anim);
+
+    dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), u32(theme::kRaised), h * 0.5f);
+
+    const float ix = pos.x + pad + anim * seg_w;
+    dl->AddRectFilled(ImVec2(ix, pos.y + pad), ImVec2(ix + seg_w, pos.y + h - pad),
+                      u32(theme::kAccent, hovered ? 1.0f : 0.92f), (h - pad * 2.0f) * 0.5f);
+
+    for (int i = 0; i < count; ++i) {
+        const ImVec2 ts = ImGui::CalcTextSize(labels[i]);
+        const float cx = pos.x + pad + seg_w * (static_cast<float>(i) + 0.5f) - ts.x * 0.5f;
+        // Fade the label between muted and the on-accent colour as the
+        // indicator passes over it, rather than switching at the midpoint.
+        const float on = std::clamp(1.0f - std::abs(anim - static_cast<float>(i)), 0.0f, 1.0f);
+        dl->AddText(ImVec2(cx, pos.y + (h - ts.y) * 0.5f),
+                    ImGui::GetColorU32(ImVec4(
+                        lerp_color(theme::kMuted, theme::kGround, on).r,
+                        lerp_color(theme::kMuted, theme::kGround, on).g,
+                        lerp_color(theme::kMuted, theme::kGround, on).b, 1.0f)),
+                    labels[i]);
+    }
+    return changed;
+}
+
+bool toggle_switch(const char* id, bool* value) {
+    if (value == nullptr) return false;
+
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImGuiStorage* store = ImGui::GetStateStorage();
+    const ImGuiID anim_id = win->GetID(id) + 1;
+
+    const float h = ImGui::GetFontSize() + 4.0f;
+    const float w = h * 1.85f;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+
+    ImGui::InvisibleButton(id, ImVec2(w, h));
+    bool changed = false;
+    if (ImGui::IsItemClicked()) { *value = !*value; changed = true; }
+    const bool hovered = ImGui::IsItemHovered();
+
+    float anim = store->GetFloat(anim_id, *value ? 1.0f : 0.0f);
+    anim = static_cast<float>(smooth_to(anim, *value ? 1.0 : 0.0,
+                                        ImGui::GetIO().DeltaTime, 0.08));
+    store->SetFloat(anim_id, anim);
+
+    const theme::Rgba track = lerp_color(theme::kLineHi, theme::kAccent, anim);
+    dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h),
+                      u32(track, hovered ? 1.0f : 0.9f), h * 0.5f);
+
+    const float r = h * 0.5f - 2.5f;
+    const float kx = pos.x + 2.5f + r + anim * (w - 2.0f * (r + 2.5f));
+    dl->AddCircleFilled(ImVec2(kx, pos.y + h * 0.5f), r,
+                        u32(anim > 0.5f ? theme::kGround : theme::kDim));
+    return changed;
+}
+
+// ---------------------------------------------------------------------------
 // Card chrome
 // ---------------------------------------------------------------------------
 
@@ -297,7 +415,10 @@ bool begin_card(const char* id, ImVec2 size) {
                                                    theme::kPanel.b, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_Border,  ImVec4(theme::kLine.r, theme::kLine.g,
                                                    theme::kLine.b, 1.0f));
-    const bool open = ImGui::BeginChild(id, size, ImGuiChildFlags_Border,
+    // No border flag: the panel is separated from the ground by fill contrast
+    // and spacing alone. An outline around every card is chrome competing with
+    // the content it is supposed to frame.
+    const bool open = ImGui::BeginChild(id, size, ImGuiChildFlags_None,
                                         ImGuiWindowFlags_NoScrollbar);
     if (open) {
         // Top-edge gradient: the card catches a little light at the top, which

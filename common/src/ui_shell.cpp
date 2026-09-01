@@ -9,6 +9,24 @@
 
 #include <GLFW/glfw3.h>
 
+#include <cstdio>
+#include <vector>
+
+#ifdef ELANORA_HAVE_STBIW
+// stb calls sprintf internally. Suppressed with a pragma rather than
+// _CRT_SECURE_NO_WARNINGS, which only works if defined before every CRT
+// header and so cannot be scoped to one include.
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+#include "stb_image_write.h"
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+#endif
+
 namespace elanora {
 
 namespace {
@@ -87,6 +105,29 @@ UiShell::~UiShell() {
     }
     if (window_) glfwDestroyWindow(window_);
     glfwTerminate();
+}
+
+bool UiShell::save_screenshot(const char* path) const {
+#ifdef ELANORA_HAVE_STBIW
+    if (window_ == nullptr) return false;
+    int w = 0, h = 0;
+    glfwGetFramebufferSize(window_, &w, &h);
+    if (w <= 0 || h <= 0) return false;
+
+    std::vector<unsigned char> px(static_cast<std::size_t>(w) * h * 4u);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadBuffer(GL_FRONT);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+
+    // OpenGL origin is bottom-left, PNG is top-left.
+    stbi_flip_vertically_on_write(1);
+    return stbi_write_png(path, w, h, 4, px.data(), w * 4) != 0;
+#else
+    (void)path;
+    std::fprintf(stderr, "save_screenshot: built without stb_image_write
+");
+    return false;
+#endif
 }
 
 void UiShell::set_clear_color(float r, float g, float b) {

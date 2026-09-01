@@ -9,6 +9,7 @@
 //   muse_monitor --autoconnect   connect on launch
 //   muse_monitor --frames N      render N frames then exit (automation)
 //   muse_monitor --verbose       leave BrainFlow's stderr logging on
+//   muse_monitor --screenshot P  save the final frame to PNG at P
 
 #include <algorithm>
 #include <array>
@@ -189,12 +190,15 @@ void plot_lanes(const char* id, const std::vector<Sample>& win,
 int main(int argc, char** argv) {
     bool synthetic = false, autoconnect = false, verbose = false;
     int max_frames = -1;
+    const char* shot_path = nullptr;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--synthetic") == 0)        synthetic = true;
         else if (std::strcmp(argv[i], "--autoconnect") == 0) autoconnect = true;
         else if (std::strcmp(argv[i], "--verbose") == 0)     verbose = true;
         else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc)
             max_frames = std::atoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc)
+            shot_path = argv[++i];
     }
 
     // BrainFlow logs to stderr at info level by default, which floods the
@@ -254,6 +258,15 @@ int main(int argc, char** argv) {
 
     double bands_at = 0.0;
     int dropped_samples = 0;
+    int sens_index = 1;                                   // 100 uV/div
+
+    // Every displayed quantity eases toward its measurement. A band value that
+    // jumps between frames forces the eye to re-read it; one that eases lets
+    // you see it rising without watching continuously.
+    std::array<std::array<Smoothed, kBandCount>, kSensorCount> sm_bands{};
+    std::array<Smoothed, kSensorCount> sm_rms{};
+    Smoothed sm_usable;
+    sm_usable.snap(0.0);
 
     int frames = 0;
     while (shell.begin_frame()) {
@@ -265,6 +278,26 @@ int main(int argc, char** argv) {
         ImGui::Begin("##root", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollbar);
+
+        // Keyboard paths for everything reachable by mouse. An instrument you
+        // are wearing on your head is easier to drive without hunting a cursor.
+        const ImGuiIO& io = ImGui::GetIO();
+        if (!io.WantTextInput) {
+            if (ImGui::IsKeyPressed(ImGuiKey_1)) sens_index = 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_2)) sens_index = 1;
+            if (ImGui::IsKeyPressed(ImGuiKey_3)) sens_index = 2;
+            if (ImGui::IsKeyPressed(ImGuiKey_H)) display.highpass = !display.highpass;
+            if (ImGui::IsKeyPressed(ImGuiKey_N)) display.notch = !display.notch;
+            if (ImGui::IsKeyPressed(ImGuiKey_Space)) {
+                if (device.connected()) {
+                    stop_polling(); recorder.stop(); device.disconnect();
+                    status = "Not connected"; status_error = false;
+                } else {
+                    do_connect();
+                }
+            }
+        }
+        const float dt = io.DeltaTime;
 
         const ChannelMap& ch = device.channels();
         const double t_eeg = recorder.latest_ts(BrainFlowPresets::DEFAULT_PRESET);
@@ -306,7 +339,9 @@ int main(int argc, char** argv) {
             }
 
             ImGui::SameLine();
-            right_align(300.0f);
+            right_align(470.0f);
+            text_mono(theme::kFaint, "space  1 2 3  H  N");
+            ImGui::SameLine(0.0f, theme::kS4);
             text_mono(theme::kMuted, "EEG %d Hz   IMU %d Hz   PPG %d Hz",
                       ch.sr_eeg, ch.sr_imu, ch.sr_ppg);
             end_card();
@@ -314,8 +349,8 @@ int main(int argc, char** argv) {
 
         // ---- EEG: the primary panel, given the space it deserves ----------
         const float gap = theme::kS3;
-        const float lower_h = 210.0f;
-        const float mid_h   = 214.0f;
+        const float lower_h = 196.0f;
+        const float mid_h   = 292.0f;
         const float eeg_h = std::max(200.0f,
             ImGui::GetContentRegionAvail().y - lower_h - mid_h - gap * 2.0f);
 
@@ -342,22 +377,23 @@ int main(int argc, char** argv) {
 
             text_mono(theme::kFaint, "uV/div");
             ImGui::SameLine(0.0f, theme::kS2);
-            for (double uv : {50.0, 100.0, 200.0}) {
-                const bool on = std::abs(display.uv_per_div - uv) < 0.5;
-                if (on) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, v4(theme::kAccent));
-                    ImGui::PushStyleColor(ImGuiCol_Text, v4(theme::kGround));
-                }
-                char lbl[16];
-                std::snprintf(lbl, sizeof(lbl), "%.0f", uv);
-                if (ImGui::SmallButton(lbl)) display.uv_per_div = uv;
-                if (on) ImGui::PopStyleColor(2);
-                ImGui::SameLine(0.0f, theme::kS1);
-            }
-            ImGui::SameLine(0.0f, theme::kS3);
-            ImGui::Checkbox("HP 0.5Hz", &display.highpass);
+            static const char* kSensLabels[] = {"50", "100", "200"};
+            static const double kSensValues[] = {50.0, 100.0, 200.0};
+            segmented("##sens", kSensLabels, 3, &sens_index, 132.0f);
+            display.uv_per_div = kSensValues[sens_index];
+
+            ImGui::SameLine(0.0f, theme::kS4);
+            toggle_switch("##hp", &display.highpass);
             ImGui::SameLine(0.0f, theme::kS2);
-            ImGui::Checkbox("Notch 60", &display.notch);
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3.0f);
+            text_colored(display.highpass ? theme::kDim : theme::kFaint, "High-pass");
+
+            ImGui::SameLine(0.0f, theme::kS4);
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 3.0f);
+            toggle_switch("##notch", &display.notch);
+            ImGui::SameLine(0.0f, theme::kS2);
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3.0f);
+            text_colored(display.notch ? theme::kDim : theme::kFaint, "Notch 60");
 
             static const char* kEegLabels[] = {"TP9", "AF7", "AF8", "TP10"};
             static const theme::Rgba kEegColors[] = {
@@ -437,9 +473,6 @@ int main(int argc, char** argv) {
             const float grid_w  = ImGui::GetContentRegionAvail().x - label_w;
             const float cell_w  = (grid_w - theme::kS1 * (kBandCount - 1)) / kBandCount;
             const float head_h  = ImGui::GetTextLineHeight() + 3.0f;
-            const float cell_h  =
-                (ImGui::GetContentRegionAvail().y - head_h - theme::kS1 * kSensorCount) /
-                kSensorCount;
 
             const ImVec2 head_origin = ImGui::GetCursorScreenPos();
             ImDrawList* hdl = ImGui::GetWindowDrawList();
@@ -455,12 +488,23 @@ int main(int argc, char** argv) {
             if (fonts().mono) ImGui::PopFont();
             ImGui::Dummy(ImVec2(1.0f, head_h));
 
+            // Measured AFTER the header, because SetCursorScreenPos below
+            // bypasses ImGui item spacing: budgeting before the header left
+            // one row worth of spacing unaccounted for and clipped TP10.
+            const float body_h = ImGui::GetContentRegionAvail().y;
+            const float cell_h =
+                (body_h - theme::kS1 * (kSensorCount - 1)) / kSensorCount;
+
             for (int r = 0; r < kSensorCount; ++r) {
                 const auto& row = spec[static_cast<std::size_t>(r)].bands;
                 int dom = 0;
                 for (int b = 1; b < kBandCount; ++b) {
                     if (row[static_cast<std::size_t>(b)] >
                         row[static_cast<std::size_t>(dom)]) dom = b;
+                }
+                for (int b = 0; b < kBandCount; ++b) {
+                    sm_bands[static_cast<std::size_t>(r)][static_cast<std::size_t>(b)]
+                        .set(row[static_cast<std::size_t>(b)], dt);
                 }
                 const ImVec2 ro = ImGui::GetCursorScreenPos();
 
@@ -473,7 +517,8 @@ int main(int argc, char** argv) {
                 for (int b = 0; b < kBandCount; ++b) {
                     band_cell(ImVec2(ro.x + label_w + (cell_w + theme::kS1) * b, ro.y),
                               ImVec2(cell_w, cell_h),
-                              row[static_cast<std::size_t>(b)],
+                              sm_bands[static_cast<std::size_t>(r)]
+                                      [static_cast<std::size_t>(b)].value,
                               theme::band_color(b), b == dom);
                 }
                 ImGui::SetCursorScreenPos(ImVec2(ro.x, ro.y + cell_h + theme::kS1));
@@ -495,9 +540,11 @@ int main(int argc, char** argv) {
                                ch.sr_eeg);
                 }
                 if (q[static_cast<std::size_t>(i)].q != Quality::Bad) ++usable;
+                sm_rms[static_cast<std::size_t>(i)].set(q[static_cast<std::size_t>(i)].rms_uv, dt);
             }
+            sm_usable.set(static_cast<double>(usable), dt);
             char cnt[8];
-            std::snprintf(cnt, sizeof(cnt), "%d", usable);
+            std::snprintf(cnt, sizeof(cnt), "%.0f", sm_usable.value);
             readout(cnt, "OF 4 USABLE",
                     usable == kSensorCount ? theme::kText : theme::kWarn);
             ImGui::Spacing();
@@ -517,7 +564,8 @@ int main(int argc, char** argv) {
                 ImGui::TextColored(v4(theme::kDim), "%-5s",
                                    electrode_name(static_cast<SensorId>(i)));
                 ImGui::SameLine(0.0f, theme::kS2);
-                ImGui::TextColored(v4(quality_color(cq.q)), "%6.1f uV", cq.rms_uv);
+                ImGui::TextColored(v4(quality_color(cq.q)), "%6.1f uV",
+                                   sm_rms[static_cast<std::size_t>(i)].value);
                 ImGui::SameLine(0.0f, theme::kS2);
                 ImGui::TextColored(v4(quality_color(cq.q)), "%s",
                                    cq.flat ? "no contact"
@@ -572,7 +620,14 @@ int main(int argc, char** argv) {
         ImGui::PopStyleVar(2);
         shell.end_frame();
 
-        if (max_frames >= 0 && ++frames >= max_frames) break;
+        ++frames;
+        // Capture the last frame, once the smoothed values have settled.
+        if (shot_path != nullptr && max_frames > 0 && frames == max_frames) {
+            if (shell.save_screenshot(shot_path)) {
+                std::printf("muse_monitor: wrote %s\n", shot_path);
+            }
+        }
+        if (max_frames >= 0 && frames >= max_frames) break;
     }
 
     stop_polling();

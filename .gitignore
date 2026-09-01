@@ -31,3 +31,4 @@ collector/third_party/miniaudio.h
 imgui.ini
 assets/fonts
 common/assets/fonts/*.ttf
+common/third_party/stb_image_write.h

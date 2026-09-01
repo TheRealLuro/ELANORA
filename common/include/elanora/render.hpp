@@ -109,6 +109,49 @@ void band_cell(ImVec2 pos, ImVec2 size, double value, theme::Rgba color,
                bool dominant);
 
 // ---------------------------------------------------------------------------
+// Motion
+//
+// Nothing in this interface snaps. A number that jumps between frames forces
+// the eye to re-read it; a number that eases carries its own history, so you
+// can see a value rising without watching it continuously.
+//
+// Frame-rate independent: the same visual settling time whether the app is
+// running at 60 or 144 Hz.
+// ---------------------------------------------------------------------------
+
+// tau is the time constant in seconds -- roughly, how long to cover 63% of the
+// remaining distance. 0.10-0.15 reads as immediate but not abrupt.
+double smooth_to(double current, double target, float dt, double tau = 0.12);
+
+// A value that eases toward whatever it is assigned.
+struct Smoothed {
+    double value = 0.0;
+    double tau   = 0.12;
+    void set(double target, float dt) { value = smooth_to(value, target, dt, tau); }
+    void snap(double v) { value = v; }
+    float f() const { return static_cast<float>(value); }
+};
+
+// Colour that eases between states, so a quality change reads as a transition
+// rather than a flicker.
+theme::Rgba lerp_color(theme::Rgba a, theme::Rgba b, float t);
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+// Segmented control with a selection indicator that slides between segments.
+// Replaces a row of loose buttons: the segments are visibly one control with
+// one answer, and the slide shows which way the selection moved.
+// Returns true on the frame the selection changes.
+bool segmented(const char* id, const char* const* labels, int count,
+               int* current, float width = 0.0f);
+
+// Animated toggle. A checkbox states a boolean; a switch shows it changing,
+// which matters for filters whose effect on the trace is immediate.
+bool toggle_switch(const char* id, bool* value);
+
+// ---------------------------------------------------------------------------
 // Card chrome
 //
 // ImGui has no card primitive, so these wrap BeginChild with the panel fill,
