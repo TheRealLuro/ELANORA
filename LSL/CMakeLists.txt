@@ -23,7 +23,7 @@ if(ELANORA_WITH_BRAINFLOW)
 
   elanora_add_app(muse_monitor
     SOURCES app/muse_monitor_main.cpp
-    DEPS    elanora_lsl elanora_ui
+    DEPS    elanora_lsl elanora_ui elanora_collector_ui
   )
 
   # Hardware-free diagnostic: prints the channel map BrainFlow reports for the

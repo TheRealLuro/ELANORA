@@ -17,6 +17,8 @@
 //   muse_monitor --frames N      render N frames then exit (automation)
 //   muse_monitor --verbose       leave BrainFlow's stderr logging on
 //   muse_monitor --screenshot P  save the final frame to PNG at P
+//   muse_monitor --collector     open on the Collector tab
+//   muse_monitor --autostart     begin a trial immediately (automation)
 
 #include <algorithm>
 #include <array>
@@ -30,6 +32,7 @@
 #include <thread>
 #include <vector>
 
+#include "elanora/collector/view.hpp"
 #include "elanora/lsl/muse_device.hpp"
 #include "elanora/lsl/signal_quality.hpp"
 #include "elanora/lsl/stream_recorder.hpp"
@@ -431,6 +434,8 @@ int main(int argc, char** argv) {
     bool synthetic = false, autoconnect = false, verbose = false, demo = false;
     int max_frames = -1;
     const char* shot_path = nullptr;
+    bool start_collector = false;
+    bool autostart = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--synthetic") == 0)        synthetic = true;
         else if (std::strcmp(argv[i], "--demo") == 0)        demo = true;
@@ -440,6 +445,8 @@ int main(int argc, char** argv) {
             max_frames = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc)
             shot_path = argv[++i];
+        else if (std::strcmp(argv[i], "--collector") == 0) start_collector = true;
+        else if (std::strcmp(argv[i], "--autostart") == 0) autostart = true;
     }
 
     if (verbose) BoardShim::enable_dev_board_logger();
@@ -500,6 +507,15 @@ int main(int argc, char** argv) {
     Smoothed sm_motion, sm_usable;
 
     DemoSource demo_source;
+    collector::CollectorState collector_state;
+    int tab = start_collector ? 1 : 0;                    // 0 monitor, 1 collector
+    if (autostart) {
+        // Runs a trial without a click so the running view can be exercised in
+        // automation. Speed is raised so a survey is reached in seconds.
+        collector_state.runner.start(collector_state.preview_schedule(),
+                                     collector_state.durations);
+        collector_state.speed = 30.0;
+    }
     std::array<Spectrum, kSensorCount> spec{};
     std::array<ChannelQuality, kSensorCount> qual{};
     double analysed_at = 0.0;
@@ -509,7 +525,7 @@ int main(int argc, char** argv) {
     while (shell.begin_frame()) {
         const ImGuiIO& io = ImGui::GetIO();
         const float dt = io.DeltaTime;
-        if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space)) {
+        if (tab == 0 && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space)) {
             if (device.connected()) {
                 stop_polling(); recorder.stop(); device.disconnect();
                 status = "Not connected"; status_error = false;
@@ -608,8 +624,13 @@ int main(int argc, char** argv) {
                     status_error ? theme::kBad
                                  : device.connected() ? theme::kGood : theme::kMuted);
 
-        ImGui::SameLine(0.0f, theme::kS3);
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 3.0f);
+        ImGui::SameLine(0.0f, theme::kS4);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 4.0f);
+        static const char* kTabs[] = {"Monitor", "Collector"};
+        segmented("##tab", kTabs, 2, &tab, 196.0f);
+
+        ImGui::SameLine(0.0f, theme::kS4);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
         if (!device.connected()) {
             ImGui::SetNextItemWidth(190.0f);
             ImGui::InputTextWithHint("##id", "serial or MAC",
@@ -645,6 +666,23 @@ int main(int argc, char** argv) {
                   ch.sr_eeg, ch.sr_imu);
 
         ImGui::Dummy(ImVec2(1.0f, theme::kS1));
+
+        if (tab == 1) {
+            // The collector needs live electrode state so a headset problem is
+            // caught in the round it happens, not at analysis.
+            collector::draw_collector(collector_state, qual, dt);
+            ImGui::End();
+            ImGui::PopStyleVar(2);
+            shell.end_frame();
+            ++frames;
+            if (shot_path != nullptr && max_frames > 0 && frames == max_frames) {
+                if (shell.save_screenshot(shot_path)) {
+                    std::printf("muse_monitor: wrote %s\n", shot_path);
+                }
+            }
+            if (max_frames >= 0 && frames >= max_frames) break;
+            continue;
+        }
 
         // ---- metric row ----------------------------------------------------
         const float avail  = ImGui::GetContentRegionAvail().x;
