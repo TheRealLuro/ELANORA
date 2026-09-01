@@ -119,6 +119,41 @@ SpectrumResult analyse(std::vector<double> samples, int sr) {
     return out;
 }
 
+// Collapses three axes into a single magnitude series, centred on its own mean.
+//
+// Six raw axes drawn as six lanes conveyed nothing: they are near-identical
+// noise, and stacked they read as a solid blob. What actually matters for this
+// project is head motion as a scalar -- it is the artifact term that decides
+// whether a gamma reading is brain or muscle.
+std::vector<double> axis_magnitude(const std::vector<Sample>& win,
+                                   const std::vector<int>& rows) {
+    std::vector<double> out;
+    if (rows.size() < 3 || win.empty()) return out;
+    out.reserve(win.size());
+    double sum = 0.0;
+    int n = 0;
+    for (const auto& s : win) {
+        double acc = 0.0;
+        bool ok = true;
+        for (int k = 0; k < 3; ++k) {
+            const int row = rows[static_cast<std::size_t>(k)];
+            if (row < 0 || row >= static_cast<int>(s.values.size())) { ok = false; break; }
+            const double v = s.values[static_cast<std::size_t>(row)];
+            if (std::isnan(v)) { ok = false; break; }
+            acc += v * v;
+        }
+        if (!ok) { out.push_back(std::nan("")); continue; }
+        const double m = std::sqrt(acc);
+        out.push_back(m);
+        sum += m; ++n;
+    }
+    if (n > 0) {
+        const double mean = sum / n;
+        for (double& v : out) if (!std::isnan(v)) v -= mean;
+    }
+    return out;
+}
+
 void plot_lanes(const char* id, const std::vector<Sample>& win,
                 const std::vector<int>& rows, const char* const* labels,
                 const theme::Rgba* colors, int n,
@@ -258,7 +293,10 @@ int main(int argc, char** argv) {
 
     double bands_at = 0.0;
     int dropped_samples = 0;
-    int sens_index = 1;                                   // 100 uV/div
+    std::array<double, kBandCount> spec_hero{};
+    std::array<SpectrumResult, kSensorCount> spec{};
+    int focus_sensor = 1;                                 // AF7 by default
+    int sens_index = 1;                                   // 50 uV/div
 
     // Every displayed quantity eases toward its measurement. A band value that
     // jumps between frames forces the eye to re-read it; one that eases lets
@@ -267,6 +305,7 @@ int main(int argc, char** argv) {
     std::array<Smoothed, kSensorCount> sm_rms{};
     Smoothed sm_usable;
     sm_usable.snap(0.0);
+    Smoothed sm_motion;
 
     int frames = 0;
     while (shell.begin_frame()) {
@@ -286,6 +325,7 @@ int main(int argc, char** argv) {
             if (ImGui::IsKeyPressed(ImGuiKey_1)) sens_index = 0;
             if (ImGui::IsKeyPressed(ImGuiKey_2)) sens_index = 1;
             if (ImGui::IsKeyPressed(ImGuiKey_3)) sens_index = 2;
+            if (ImGui::IsKeyPressed(ImGuiKey_4)) sens_index = 3;
             if (ImGui::IsKeyPressed(ImGuiKey_H)) display.highpass = !display.highpass;
             if (ImGui::IsKeyPressed(ImGuiKey_N)) display.notch = !display.notch;
             if (ImGui::IsKeyPressed(ImGuiKey_Space)) {
@@ -339,8 +379,35 @@ int main(int argc, char** argv) {
             }
 
             ImGui::SameLine();
-            right_align(470.0f);
-            text_mono(theme::kFaint, "space  1 2 3  H  N");
+            right_align(660.0f);
+
+            // Dominant band on the focused sensor, at display size. This is
+            // the single number an operator watches while adjusting a headset,
+            // and it was previously buried as a 0.89 in a grid cell.
+            {
+                const auto& fb = spec_hero;
+                int dom = 0;
+                for (int b = 1; b < kBandCount; ++b) {
+                    if (fb[static_cast<std::size_t>(b)] > fb[static_cast<std::size_t>(dom)]) dom = b;
+                }
+                ImGui::BeginGroup();
+                const float y0 = ImGui::GetCursorPosY();
+                ImGui::SetCursorPosY(y0 - 6.0f);
+                if (fonts().display) ImGui::PushFont(fonts().display);
+                ImGui::TextColored(v4(theme::band_color(dom)), "%s",
+                                   band_name(static_cast<Band>(dom)));
+                if (fonts().display) ImGui::PopFont();
+                ImGui::EndGroup();
+                ImGui::SameLine(0.0f, theme::kS3);
+                ImGui::BeginGroup();
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f);
+                text_colored(theme::kDim, "%.2f", fb[static_cast<std::size_t>(dom)]);
+                text_colored(theme::kFaint, "dominant");
+                ImGui::EndGroup();
+            }
+
+            ImGui::SameLine(0.0f, theme::kS5);
+            text_mono(theme::kFaint, "space  1-4  H  N");
             ImGui::SameLine(0.0f, theme::kS4);
             text_mono(theme::kMuted, "EEG %d Hz   IMU %d Hz   PPG %d Hz",
                       ch.sr_eeg, ch.sr_imu, ch.sr_ppg);
@@ -349,15 +416,13 @@ int main(int argc, char** argv) {
 
         // ---- EEG: the primary panel, given the space it deserves ----------
         const float gap = theme::kS3;
-        const float lower_h = 196.0f;
+        const float lower_h = 126.0f;
         const float mid_h   = 292.0f;
         const float eeg_h = std::max(200.0f,
             ImGui::GetContentRegionAvail().y - lower_h - mid_h - gap * 2.0f);
 
         // Recomputed once per interval and shared by every panel below, so the
         // spectrum, the matrix and the bars all describe the same window.
-        static std::array<SpectrumResult, kSensorCount> spec{};
-        static int focus_sensor = 1;                      // AF7 by default
         const double now_t = ImGui::GetTime();
         if (now_t - bands_at > 0.15) {
             bands_at = now_t;
@@ -369,6 +434,7 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        spec_hero = spec[static_cast<std::size_t>(focus_sensor)].bands;
 
         if (begin_card("##eegcard", ImVec2(0, eeg_h))) {
             eyebrow("EEG");
@@ -377,9 +443,9 @@ int main(int argc, char** argv) {
 
             text_mono(theme::kFaint, "uV/div");
             ImGui::SameLine(0.0f, theme::kS2);
-            static const char* kSensLabels[] = {"50", "100", "200"};
-            static const double kSensValues[] = {50.0, 100.0, 200.0};
-            segmented("##sens", kSensLabels, 3, &sens_index, 132.0f);
+            static const char* kSensLabels[] = {"25", "50", "100", "200"};
+            static const double kSensValues[] = {25.0, 50.0, 100.0, 200.0};
+            segmented("##sens", kSensLabels, 4, &sens_index, 176.0f);
             display.uv_per_div = kSensValues[sens_index];
 
             ImGui::SameLine(0.0f, theme::kS4);
@@ -625,21 +691,48 @@ int main(int argc, char** argv) {
         if (has_ppg) { end_card(); ImGui::SameLine(0.0f, gap); }
 
         if (begin_card("##imucard", ImVec2(has_ppg ? col2 : 0.0f, lower_h))) {
-            eyebrow("IMU");
+            eyebrow("Head motion");
+
+            const auto accel_mag = axis_magnitude(imu_win, ch.accel);
+            const auto gyro_mag  = axis_magnitude(imu_win, ch.gyro);
+
+            // Motion energy over the last second: the artifact term that
+            // decides whether a high-frequency EEG reading is brain or muscle.
+            double energy = 0.0;
+            int counted = 0;
+            const std::size_t tail = accel_mag.size() > 52 ? accel_mag.size() - 52 : 0;
+            for (std::size_t i = tail; i < accel_mag.size(); ++i) {
+                if (!std::isnan(accel_mag[i])) { energy += accel_mag[i] * accel_mag[i]; ++counted; }
+            }
+            energy = counted ? std::sqrt(energy / counted) : 0.0;
+            sm_motion.set(energy, dt);
+
             ImGui::SameLine();
-            right_align(150.0f);
-            text_mono(theme::kFaint, "accel + gyro, 6 axis");
-            std::vector<int> imu_rows = ch.accel;
-            imu_rows.insert(imu_rows.end(), ch.gyro.begin(), ch.gyro.end());
-            static const char* kImuLabels[] = {"ax","ay","az","gx","gy","gz"};
-            static const theme::Rgba kImuColors[] = {
-                theme::kTrace, theme::kTrace, theme::kTrace,
-                theme::kTraceAlt, theme::kTraceAlt, theme::kTraceAlt};
-            DisplaySettings imu_disp; imu_disp.highpass = false; imu_disp.notch = false;
-            plot_lanes("imu", imu_win, imu_rows, kImuLabels, kImuColors,
-                       static_cast<int>(std::min<std::size_t>(imu_rows.size(), 6)),
-                       imu_disp, ch.sr_imu,
-                       ImGui::GetContentRegionAvail().y - 4.0f, false, 2.0, nullptr);
+            right_align(190.0f);
+            const bool still = sm_motion.value < 0.05;
+            text_colored(still ? theme::kGood : theme::kWarn,
+                         still ? "still" : "moving");
+            ImGui::SameLine(0.0f, theme::kS3);
+            text_mono(theme::kMuted, "%.3f rms", sm_motion.value);
+
+            const ImVec2 o = ImGui::GetCursorScreenPos();
+            const float w = ImGui::GetContentRegionAvail().x;
+            const float h = ImGui::GetContentRegionAvail().y - 4.0f;
+            if (accel_mag.empty()) {
+                ImDrawList* d0 = ImGui::GetWindowDrawList();
+                const char* msg = "waiting for samples";
+                const ImVec2 ts = ImGui::CalcTextSize(msg);
+                d0->AddText(ImVec2(o.x + (w - ts.x) * 0.5f, o.y + (h - ts.y) * 0.5f),
+                            ImGui::GetColorU32(v4(theme::kFaint)), msg);
+            } else {
+                // No fill on these: they overlap, and filled overlapping traces
+                // merge into a single mass that shows nothing.
+                draw_trace_minmax(accel_mag, o, ImVec2(w, h), 0.35,
+                                  theme::kTrace, false);
+                draw_trace_minmax(gyro_mag, o, ImVec2(w, h), 40.0,
+                                  theme::kTraceAlt, false);
+            }
+            ImGui::Dummy(ImVec2(w, h));
         }
         end_card();
 

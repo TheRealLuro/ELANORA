@@ -101,12 +101,21 @@ int draw_trace_minmax(const std::vector<double>& samples,
 
     auto flush = [&]() {
         if (run.size() >= 2) {
+            // Fill from the centre line out to the envelope. A bare polyline
+            // reads as a wireframe; the fill gives the trace body and makes
+            // amplitude legible as area rather than only as excursion.
             if (glow) {
+                for (std::size_t i = 0; i + 1 < run.size(); i += 2) {
+                    dl->AddLine(ImVec2(run[i].x, mid), ImVec2(run[i].x, run[i].y),
+                                u32(color, 0.07f), 1.0f);
+                    dl->AddLine(ImVec2(run[i + 1].x, mid), ImVec2(run[i + 1].x, run[i + 1].y),
+                                u32(color, 0.07f), 1.0f);
+                }
                 dl->AddPolyline(run.data(), static_cast<int>(run.size()),
-                                u32(color, 0.13f), ImDrawFlags_None, 4.0f);
+                                u32(color, 0.10f), ImDrawFlags_None, 4.0f);
             }
             dl->AddPolyline(run.data(), static_cast<int>(run.size()),
-                            u32(color), ImDrawFlags_None, 1.0f);
+                            u32(color), ImDrawFlags_None, 1.4f);
         }
         run.clear();
     };
@@ -201,9 +210,12 @@ void draw_spectrum(const double* mags, int n_bins, double bin_hz,
         const float x0 = origin.x + static_cast<float>(lo / f_max) * size.x;
         const float x1 = origin.x + static_cast<float>(std::min(hi, f_max) / f_max) * size.x;
         const auto col = theme::band_color(b);
-        dl->AddRectFilled(ImVec2(x0, origin.y), ImVec2(x1, origin.y + plot_h), u32(col, 0.07f));
         dl->AddLine(ImVec2(std::round(x0) + 0.5f, origin.y),
-                    ImVec2(std::round(x0) + 0.5f, origin.y + plot_h), u32(theme::kLine, 0.6f));
+                    ImVec2(std::round(x0) + 0.5f, origin.y + plot_h), u32(theme::kLine, 0.9f));
+        // A short coloured tick at the baseline, rather than a wash of colour
+        // across the whole region.
+        dl->AddLine(ImVec2(std::round(x0) + 0.5f, origin.y + plot_h - 5.0f),
+                    ImVec2(std::round(x0) + 0.5f, origin.y + plot_h), u32(col, 0.9f), 2.0f);
         if (fonts().mono) ImGui::PushFont(fonts().mono);
         const char* nm = band_name(static_cast<Band>(b));
         if (ImGui::CalcTextSize(nm).x + 6.0f < (x1 - x0)) {
@@ -428,15 +440,23 @@ bool begin_card(const char* id, ImVec2 size) {
     const bool open = ImGui::BeginChild(id, size, ImGuiChildFlags_None,
                                         ImGuiWindowFlags_NoScrollbar);
     if (open) {
-        // Top-edge gradient: the card catches a little light at the top, which
-        // separates stacked cards without adding another border line.
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImVec2 p0 = ImGui::GetWindowPos();
-        const ImVec2 p1 = ImVec2(p0.x + ImGui::GetWindowWidth(), p0.y + 46.0f);
-        dl->PushClipRect(p0, ImVec2(p1.x, p0.y + ImGui::GetWindowHeight()), true);
-        dl->AddRectFilledMultiColor(p0, p1,
+        const float w = ImGui::GetWindowWidth();
+        const float h = ImGui::GetWindowHeight();
+        dl->PushClipRect(p0, ImVec2(p0.x + w, p0.y + h), true);
+
+        // Top-edge gradient: the card catches a little light at the top.
+        dl->AddRectFilledMultiColor(p0, ImVec2(p0.x + w, p0.y + 52.0f),
             u32(theme::kPanelHi), u32(theme::kPanelHi),
             u32(theme::kPanel),   u32(theme::kPanel));
+
+        // A one-pixel lit edge along the top. This is what makes a panel read
+        // as a raised plane rather than a lighter rectangle -- the same trick
+        // a bevel uses, at a thousandth of the visual cost.
+        dl->AddLine(ImVec2(p0.x + theme::kRadius, p0.y + 0.5f),
+                    ImVec2(p0.x + w - theme::kRadius, p0.y + 0.5f),
+                    u32(theme::kLineHi, 0.55f), 1.0f);
         dl->PopClipRect();
     }
     return open;
