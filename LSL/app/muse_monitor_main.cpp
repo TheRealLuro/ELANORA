@@ -328,10 +328,11 @@ int main(int argc, char** argv) {
 
         ImGui::SameLine(0.0f, theme::kS3);
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 3.0f);
-        ImGui::SetNextItemWidth(190.0f);
-        ImGui::InputTextWithHint("##id", "serial or MAC", device_id.data(), device_id.size());
-        ImGui::SameLine(0.0f, theme::kS2);
         if (!device.connected()) {
+            ImGui::SetNextItemWidth(190.0f);
+            ImGui::InputTextWithHint("##id", "serial or MAC",
+                                     device_id.data(), device_id.size());
+            ImGui::SameLine(0.0f, theme::kS2);
             if (ImGui::Button("Connect")) do_connect();
         } else if (ImGui::Button("Disconnect")) {
             stop_polling(); recorder.stop(); device.disconnect();
@@ -339,8 +340,25 @@ int main(int argc, char** argv) {
         }
 
         ImGui::SameLine();
-        right_align(300.0f);
+        right_align(360.0f);
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 5.0f);
+
+        // Data freshness. A dashboard of numbers gives no clue whether it is
+        // live or frozen on the last packet before a BLE stall, so say so.
+        const double age = (device.connected() && t_eeg > 0.0)
+                               ? (recorder.latest_ts(BrainFlowPresets::DEFAULT_PRESET) > 0.0
+                                      ? 0.0 : 1e9)
+                               : 1e9;
+        (void)age;
+        static double last_seen_ts = 0.0;
+        static double last_seen_at = 0.0;
+        if (t_eeg > last_seen_ts) { last_seen_ts = t_eeg; last_seen_at = now_t; }
+        const double stale = device.connected() ? (now_t - last_seen_at) : 0.0;
+
+        if (device.connected() && stale > 1.0) {
+            text_colored(theme::kBad, "NO DATA %.0fs", stale);
+            ImGui::SameLine(0.0f, theme::kS3);
+        }
         text_mono(theme::kFaint, "EEG %d Hz   IMU %d Hz   space to connect",
                   ch.sr_eeg, ch.sr_imu);
 
@@ -407,9 +425,12 @@ int main(int argc, char** argv) {
             text_mono(theme::kFaint, "click a row to focus");
             ImGui::Dummy(ImVec2(1.0f, theme::kS3));
 
-            const float lbl_w  = 72.0f;
-            const float rms_w  = 100.0f;
-            const float peak_w = 90.0f;
+            // Wider label and right-hand columns: the band columns previously
+            // took luxurious width while amplitude and peak were squeezed
+            // against the edge, which read as an unbalanced table.
+            const float lbl_w  = 104.0f;
+            const float rms_w  = 132.0f;
+            const float peak_w = 108.0f;
             const float grid_w = ImGui::GetContentRegionAvail().x - lbl_w - rms_w - peak_w;
             const float col_w  = grid_w / kBandCount;
 
@@ -465,51 +486,79 @@ int main(int argc, char** argv) {
                 }
 
                 const float line_h = ImGui::GetTextLineHeight();
-                const float ty = ro.y + (row_h - 6.0f - line_h * 2.2f) * 0.5f;
+                // Content is centred in the row rather than pinned to the top,
+                // so the generous row height reads as breathing room instead of
+                // as a value floating in an empty box.
+                const float ty = ro.y + row_h * 0.5f - 26.0f;
 
                 if (fonts().subhead) ImGui::PushFont(fonts().subhead);
-                dl->AddText(ImVec2(ro.x, ty),
+                dl->AddText(ImVec2(ro.x, ty + 2.0f),
                             ImGui::GetColorU32(v4(r == focus_sensor ? theme::kText
                                                                     : theme::kDim)),
                             electrode_name(static_cast<SensorId>(r)));
                 if (fonts().subhead) ImGui::PopFont();
 
-                if (fonts().monoBig) ImGui::PushFont(fonts().monoBig);
-                for (int b = 0; b < kBandCount; ++b) {
-                    char val[16];
-                    std::snprintf(val, sizeof(val), "%.2f",
-                                  sm_band[static_cast<std::size_t>(r)]
-                                         [static_cast<std::size_t>(b)].value);
-                    const bool is_dom = (b == rdom) && spec[static_cast<std::size_t>(r)].valid;
-                    // Weight carries the ranking, so the dominant band needs no
-                    // extra colour to stand out.
-                    dl->AddText(ImVec2(ro.x + lbl_w + col_w * b, ty - 4.0f),
-                                ImGui::GetColorU32(v4(is_dom ? theme::kText : theme::kFaint)),
-                                val);
-                }
-                if (fonts().monoBig) ImGui::PopFont();
-
+                // Quality sits beside the electrode name, on its baseline --
+                // it belongs to the sensor, not underneath the whole row.
                 const auto& q = qual[static_cast<std::size_t>(r)];
+                if (fonts().eyebrow) ImGui::PushFont(fonts().eyebrow);
+                dl->AddText(ImVec2(ro.x, ty + line_h + 12.0f),
+                            ImGui::GetColorU32(v4(quality_color(q.q))),
+                            q.flat ? "no contact" : q.railed ? "saturated" : quality_name(q.q));
+                if (fonts().eyebrow) ImGui::PopFont();
+
+                for (int b = 0; b < kBandCount; ++b) {
+                    const double val = sm_band[static_cast<std::size_t>(r)]
+                                              [static_cast<std::size_t>(b)].value;
+                    const bool is_dom = (b == rdom) && spec[static_cast<std::size_t>(r)].valid;
+                    const float cx = ro.x + lbl_w + col_w * b;
+
+                    char txt[16];
+                    std::snprintf(txt, sizeof(txt), "%.2f", val);
+                    if (fonts().monoBig) ImGui::PushFont(fonts().monoBig);
+                    dl->AddText(ImVec2(cx, ty),
+                                ImGui::GetColorU32(v4(is_dom ? theme::kText : theme::kFaint)),
+                                txt);
+                    if (fonts().monoBig) ImGui::PopFont();
+
+                    // A bar under each value. The number gives the exact
+                    // figure; the bar makes five of them comparable without
+                    // reading any of them, which is what a matrix is for.
+                    const float bw = col_w - theme::kS4;
+                    const float by = ty + line_h + 18.0f;
+                    dl->AddRectFilled(ImVec2(cx, by), ImVec2(cx + bw, by + 3.0f),
+                                      ImGui::GetColorU32(v4(theme::kLine)), 1.5f);
+                    if (val > 0.001) {
+                        const float fill = bw * static_cast<float>(std::clamp(val, 0.0, 1.0));
+                        dl->AddRectFilled(
+                            ImVec2(cx, by), ImVec2(cx + fill, by + 3.0f),
+                            ImGui::GetColorU32(ImVec4(
+                                theme::band_color(b).r, theme::band_color(b).g,
+                                theme::band_color(b).b, is_dom ? 1.0f : 0.35f)),
+                            1.5f);
+                    }
+                }
+
                 if (fonts().mono) ImGui::PushFont(fonts().mono);
                 char rms[24];
                 std::snprintf(rms, sizeof(rms), "%.1f uV",
                               sm_rms[static_cast<std::size_t>(r)].value);
-                dl->AddText(ImVec2(ro.x + lbl_w + grid_w, ty + 3.0f),
+                dl->AddText(ImVec2(ro.x + lbl_w + grid_w, ty + 6.0f),
                             ImGui::GetColorU32(v4(quality_color(q.q))), rms);
                 char pk[24];
                 std::snprintf(pk, sizeof(pk), "%.1f Hz",
                               sm_peak[static_cast<std::size_t>(r)].value);
-                dl->AddText(ImVec2(ro.x + lbl_w + grid_w + rms_w, ty + 3.0f),
+                dl->AddText(ImVec2(ro.x + lbl_w + grid_w + rms_w, ty + 6.0f),
                             ImGui::GetColorU32(v4(theme::kMuted)), pk);
                 if (fonts().mono) ImGui::PopFont();
 
-                // Quality as a word as well as a colour, so the state survives
-                // greyscale and colour-blindness.
-                if (fonts().eyebrow) ImGui::PushFont(fonts().eyebrow);
-                dl->AddText(ImVec2(ro.x, ty + line_h + 10.0f),
-                            ImGui::GetColorU32(v4(quality_color(q.q))),
-                            q.flat ? "no contact" : q.railed ? "saturated" : quality_name(q.q));
-                if (fonts().eyebrow) ImGui::PopFont();
+                // Hairline between rows, drawn last so the hover fill sits
+                // under it rather than cutting it.
+                if (r + 1 < kSensorCount) {
+                    dl->AddLine(ImVec2(ro.x, ro.y + row_h - 1.0f),
+                                ImVec2(ro.x + row_w, ro.y + row_h - 1.0f),
+                                ImGui::GetColorU32(v4(theme::kLine)), 1.0f);
+                }
 
                 ImGui::SetCursorScreenPos(ImVec2(ro.x, ro.y + row_h));
             }
