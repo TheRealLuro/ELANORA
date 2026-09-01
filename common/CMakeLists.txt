@@ -24,6 +24,7 @@ if(ELANORA_BUILD_APPS)
     SOURCES
       src/ui_shell.cpp
       src/theme.cpp
+      src/render.cpp
     DEPS
       elanora_common
       imgui::imgui

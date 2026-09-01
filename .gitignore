@@ -29,3 +29,5 @@ collector/third_party/miniaudio.h
 
 # ImGui writes window layout state next to the working directory at runtime
 imgui.ini
+assets/fonts
+common/assets/fonts/*.ttf

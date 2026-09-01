@@ -209,6 +209,49 @@ endif()
 # Downloaded rather than committed; see .gitignore.
 # ---------------------------------------------------------------------------
 if(ELANORA_BUILD_APPS)
+  # ---------------------------------------------------------------------------
+  # Fonts. ImGui's built-in face is ProggyClean, a 13px bitmap font, and it is
+  # the single biggest reason an ImGui app reads as a debug overlay rather than
+  # an application. Fira Sans / Fira Code are the pairing the design system
+  # selected for data dashboards.
+  #
+  # Downloaded rather than committed so the repo stays free of binaries. If the
+  # download fails the app falls back to system Segoe UI / Consolas, so a
+  # missing network is a cosmetic downgrade rather than a build failure.
+  # ---------------------------------------------------------------------------
+  set(ELANORA_FONT_DIR "${CMAKE_SOURCE_DIR}/common/assets/fonts")
+  file(MAKE_DIRECTORY "${ELANORA_FONT_DIR}")
+  # raw.githubusercontent.com directly rather than the github.com/.../raw
+  # redirect, which is one more hop that can fail silently.
+  set(_font_base "https://raw.githubusercontent.com/mozilla/Fira/4.202/ttf")
+  set(_fonts FiraSans-Regular.ttf FiraSans-Medium.ttf FiraSans-Light.ttf FiraMono-Regular.ttf)
+  foreach(_name IN LISTS _fonts)
+    set(_dest "${ELANORA_FONT_DIR}/${_name}")
+    # Re-fetch anything implausibly small: file(DOWNLOAD) does NOT fail on an
+    # HTTP 404, it reports success and writes the error body (or nothing), so
+    # a zero-byte "font" lands on disk and ImGui then asserts on it.
+    if(EXISTS "${_dest}")
+      file(SIZE "${_dest}" _sz)
+      if(_sz LESS 4096)
+        message(STATUS "Discarding truncated font ${_name} (${_sz} bytes)")
+        file(REMOVE "${_dest}")
+      endif()
+    endif()
+    if(NOT EXISTS "${_dest}")
+      message(STATUS "Downloading font ${_name} ...")
+      file(DOWNLOAD "${_font_base}/${_name}" "${_dest}" TLS_VERIFY ON STATUS _st)
+      list(GET _st 0 _code)
+      set(_sz 0)
+      if(EXISTS "${_dest}")
+        file(SIZE "${_dest}" _sz)
+      endif()
+      if(NOT _code EQUAL 0 OR _sz LESS 4096)
+        message(WARNING "Could not fetch ${_name}; falling back to system fonts.")
+        file(REMOVE "${_dest}")
+      endif()
+    endif()
+  endforeach()
+
   set(MINIAUDIO_HEADER "${CMAKE_SOURCE_DIR}/collector/third_party/miniaudio.h")
   if(NOT EXISTS "${MINIAUDIO_HEADER}")
     message(STATUS "Downloading miniaudio.h ...")

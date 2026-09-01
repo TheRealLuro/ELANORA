@@ -57,6 +57,11 @@ UiShell::UiShell(const char* title, int width, int height) {
 
     apply_elanora_theme();
 
+    // Before backend init so the atlas is built once. Without this the app
+    // renders in ProggyClean, the 13px bitmap face ImGui ships with, which is
+    // the single biggest reason an ImGui program reads as a debug overlay.
+    load_fonts();
+
     if (!ImGui_ImplGlfw_InitForOpenGL(window_, true)) {
         error_ = "ImGui_ImplGlfw_InitForOpenGL failed";
         return;
