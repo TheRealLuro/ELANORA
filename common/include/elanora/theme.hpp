@@ -45,11 +45,13 @@ namespace theme {
 
 struct Rgba { float r, g, b, a; };
 
-// Surfaces
-inline constexpr Rgba kGround  {0.008f, 0.024f, 0.090f, 1.0f};  // #020617
-inline constexpr Rgba kPanel   {0.043f, 0.067f, 0.125f, 1.0f};  // #0B1120
-inline constexpr Rgba kPanelHi {0.063f, 0.102f, 0.180f, 1.0f};  // #101A2E
-inline constexpr Rgba kRaised  {0.075f, 0.106f, 0.180f, 1.0f};  // #131B2E
+// Surfaces. The ground is pushed darker and the panel lighter than the source
+// palette: at the original values a card was barely a shade off the page and
+// nothing read as a distinct plane.
+inline constexpr Rgba kGround  {0.004f, 0.016f, 0.035f, 1.0f};  // #010409
+inline constexpr Rgba kPanel   {0.047f, 0.075f, 0.122f, 1.0f};  // #0C131F
+inline constexpr Rgba kPanelHi {0.071f, 0.106f, 0.165f, 1.0f};  // #121B2A
+inline constexpr Rgba kRaised  {0.082f, 0.114f, 0.169f, 1.0f};  // #151D2B
 inline constexpr Rgba kLine    {0.118f, 0.161f, 0.231f, 1.0f};  // #1E293B
 inline constexpr Rgba kLineHi  {0.200f, 0.255f, 0.333f, 1.0f};  // #334155
 
@@ -68,13 +70,23 @@ inline constexpr Rgba kGood    {0.133f, 0.773f, 0.369f, 1.0f};  // #22C55E
 inline constexpr Rgba kWarn    {0.961f, 0.620f, 0.043f, 1.0f};  // #F59E0B
 inline constexpr Rgba kBad     {0.937f, 0.267f, 0.267f, 1.0f};  // #EF4444
 
-// The only fully saturated hues on screen: signal. Fixed per band so a band is
-// the same colour in every chart in every app.
+// Band hues, used ONLY to label a band -- in a header, a legend, a spectrum
+// region. Never to fill a grid of cells: five hues across twenty cells read as
+// spreadsheet conditional formatting rather than as data.
 inline constexpr Rgba kDelta {0.655f, 0.545f, 0.980f, 1.0f};  // #A78BFA
 inline constexpr Rgba kTheta {0.376f, 0.647f, 0.980f, 1.0f};  // #60A5FA
 inline constexpr Rgba kAlpha {0.176f, 0.831f, 0.749f, 1.0f};  // #2DD4BF
 inline constexpr Rgba kBeta  {0.984f, 0.749f, 0.141f, 1.0f};  // #FBBF24
 inline constexpr Rgba kGamma {0.957f, 0.447f, 0.714f, 1.0f};  // #F472B6
+
+// Traces are ONE colour.
+//
+// Four hues for four EEG channels put four more competing colours on a screen
+// that already had nine. Channels are told apart by lane position and label,
+// which is how clinical EEG has always done it -- colour adds nothing here and
+// costs the whole palette its restraint.
+inline constexpr Rgba kTrace    {0.541f, 0.776f, 0.918f, 1.0f};
+inline constexpr Rgba kTraceAlt {0.478f, 0.541f, 0.678f, 1.0f};  // gyro vs accel
 
 // Spacing scale, density 8/10 (dense dashboard).
 inline constexpr float kS1 = 4.0f;

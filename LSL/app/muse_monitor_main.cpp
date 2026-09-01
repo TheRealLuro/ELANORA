@@ -397,7 +397,7 @@ int main(int argc, char** argv) {
 
             static const char* kEegLabels[] = {"TP9", "AF7", "AF8", "TP10"};
             static const theme::Rgba kEegColors[] = {
-                theme::kTheta, theme::kAlpha, theme::kBeta, theme::kGamma};
+                theme::kTrace, theme::kTrace, theme::kTrace, theme::kTrace};
 
             constexpr float kGutter = 52.0f;   // label + calibration column
             const float axis_h = ImGui::GetTextLineHeight() + 4.0f;
@@ -476,24 +476,26 @@ int main(int argc, char** argv) {
 
             const ImVec2 head_origin = ImGui::GetCursorScreenPos();
             ImDrawList* hdl = ImGui::GetWindowDrawList();
-            if (fonts().mono) ImGui::PushFont(fonts().mono);
             for (int b = 0; b < kBandCount; ++b) {
                 const char* nm = band_name(static_cast<Band>(b));
-                const ImVec2 ts = ImGui::CalcTextSize(nm);
-                hdl->AddText(ImVec2(head_origin.x + label_w + (cell_w + theme::kS1) * b +
-                                        (cell_w - ts.x) * 0.5f,
-                                    head_origin.y),
-                             ImGui::GetColorU32(v4(theme::band_color(b))), nm);
+                const float bx = head_origin.x + label_w + (cell_w + theme::kS1) * b;
+                // A small dot carries the band hue; the label itself stays
+                // neutral, so the header is legible rather than a rainbow.
+                hdl->AddCircleFilled(ImVec2(bx + 3.0f, head_origin.y + 7.0f), 3.0f,
+                                     ImGui::GetColorU32(v4(theme::band_color(b))));
+                hdl->AddText(ImVec2(bx + 11.0f, head_origin.y),
+                             ImGui::GetColorU32(v4(theme::kMuted)), nm);
             }
-            if (fonts().mono) ImGui::PopFont();
             ImGui::Dummy(ImVec2(1.0f, head_h));
 
             // Measured AFTER the header, because SetCursorScreenPos below
             // bypasses ImGui item spacing: budgeting before the header left
             // one row worth of spacing unaccounted for and clipped TP10.
-            const float body_h = ImGui::GetContentRegionAvail().y;
+            // Six px of tail so the last row's bar does not sit on the card
+            // edge, which reads as clipped even when it is fully drawn.
+            const float body_h = ImGui::GetContentRegionAvail().y - 6.0f;
             const float cell_h =
-                (body_h - theme::kS1 * (kSensorCount - 1)) / kSensorCount;
+                (body_h - theme::kS1 * kSensorCount) / kSensorCount;
 
             for (int r = 0; r < kSensorCount; ++r) {
                 const auto& row = spec[static_cast<std::size_t>(r)].bands;
@@ -506,13 +508,37 @@ int main(int argc, char** argv) {
                     sm_bands[static_cast<std::size_t>(r)][static_cast<std::size_t>(b)]
                         .set(row[static_cast<std::size_t>(b)], dt);
                 }
-                const ImVec2 ro = ImGui::GetCursorScreenPos();
 
-                if (fonts().mono) ImGui::PushFont(fonts().mono);
-                ImGui::TextColored(v4(r == focus_sensor ? theme::kText : theme::kMuted),
-                                   "%s", electrode_name(static_cast<SensorId>(r)));
-                if (fonts().mono) ImGui::PopFont();
+                const ImVec2 ro = ImGui::GetCursorScreenPos();
+                const float row_w = ImGui::GetContentRegionAvail().x;
+
+                // Whole row is the hit target, and it highlights on hover, so
+                // "click a row to focus" is discoverable rather than a caption
+                // asking you to guess where.
+                char rid[16];
+                std::snprintf(rid, sizeof(rid), "##row%d", r);
+                ImGui::SetCursorScreenPos(ro);
+                ImGui::InvisibleButton(rid, ImVec2(row_w, cell_h));
                 if (ImGui::IsItemClicked()) focus_sensor = r;
+                const bool hot = ImGui::IsItemHovered() || r == focus_sensor;
+
+                ImDrawList* rdl = ImGui::GetWindowDrawList();
+                if (hot) {
+                    rdl->AddRectFilled(ImVec2(ro.x - theme::kS2, ro.y),
+                                       ImVec2(ro.x + row_w, ro.y + cell_h),
+                                       ImGui::GetColorU32(v4(theme::kRaised)),
+                                       theme::kRadiusSm);
+                }
+
+                // Label and values share one baseline. Previously the label
+                // sat at the row top while band_cell centred its value, so a
+                // row read as belonging to the row above it.
+                const float text_h = ImGui::GetTextLineHeight();
+                const float text_y = ro.y + (cell_h - 3.0f - text_h) * 0.5f;
+                rdl->AddText(ImVec2(ro.x, text_y),
+                             ImGui::GetColorU32(v4(r == focus_sensor ? theme::kText
+                                                                     : theme::kMuted)),
+                             electrode_name(static_cast<SensorId>(r)));
 
                 for (int b = 0; b < kBandCount; ++b) {
                     band_cell(ImVec2(ro.x + label_w + (cell_w + theme::kS1) * b, ro.y),
@@ -559,33 +585,35 @@ int main(int argc, char** argv) {
                                   ImGui::GetColorU32(v4(theme::kRaised)), theme::kRadiusSm);
                 dl->AddRectFilled(p0, ImVec2(p0.x + 2.0f, p0.y + h),
                                   ImGui::GetColorU32(v4(quality_color(cq.q))));
-                ImGui::SetCursorScreenPos(ImVec2(p0.x + theme::kS2, p0.y + 4.0f));
-                if (fonts().mono) ImGui::PushFont(fonts().mono);
-                ImGui::TextColored(v4(theme::kDim), "%-5s",
+                ImGui::SetCursorScreenPos(ImVec2(p0.x + theme::kS3, p0.y + 4.0f));
+                ImGui::TextColored(v4(theme::kDim), "%s",
                                    electrode_name(static_cast<SensorId>(i)));
-                ImGui::SameLine(0.0f, theme::kS2);
-                ImGui::TextColored(v4(quality_color(cq.q)), "%6.1f uV",
+                ImGui::SameLine(0.0f, theme::kS4);
+                ImGui::TextColored(v4(theme::kMuted), "%.0f uV",
                                    sm_rms[static_cast<std::size_t>(i)].value);
-                ImGui::SameLine(0.0f, theme::kS2);
+                ImGui::SameLine();
+                right_align(78.0f);
                 ImGui::TextColored(v4(quality_color(cq.q)), "%s",
                                    cq.flat ? "no contact"
                                    : cq.railed ? "saturated"
                                    : quality_name(cq.q));
-                if (fonts().mono) ImGui::PopFont();
                 ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + h + theme::kS1));
             }
         }
         end_card();
 
         // ---- PPG / IMU ------------------------------------------------------
-        const float col2 = (ImGui::GetContentRegionAvail().x - gap) / 2.0f;
-        if (begin_card("##ppgcard", ImVec2(col2, lower_h))) {
+        const bool has_ppg = !ch.ppg.empty();
+        const float col2 = has_ppg ? (ImGui::GetContentRegionAvail().x - gap) / 2.0f
+                                   : 0.0f;
+        if (has_ppg && begin_card("##ppgcard", ImVec2(col2, lower_h))) {
             eyebrow("PPG");
             ImGui::SameLine();
             right_align(190.0f);
             text_mono(theme::kFaint, "[0] red 660  [1] IR 940");
             static const char* kPpgLabels[] = {"red", "IR", "amb"};
-            static const theme::Rgba kPpgColors[] = {theme::kGamma, theme::kAlpha, theme::kFaint};
+            static const theme::Rgba kPpgColors[] = {
+                theme::kTrace, theme::kTraceAlt, theme::kFaint};
             // PPG is raw counts, not microvolts, and its DC level is large --
             // the high-pass is what makes the pulse visible at all here.
             DisplaySettings ppg_disp; ppg_disp.highpass = true; ppg_disp.notch = false;
@@ -594,10 +622,9 @@ int main(int argc, char** argv) {
                        ppg_disp, ch.sr_ppg,
                        ImGui::GetContentRegionAvail().y - 4.0f, true, 4000.0, nullptr);
         }
-        end_card();
+        if (has_ppg) { end_card(); ImGui::SameLine(0.0f, gap); }
 
-        ImGui::SameLine(0.0f, gap);
-        if (begin_card("##imucard", ImVec2(col2, lower_h))) {
+        if (begin_card("##imucard", ImVec2(has_ppg ? col2 : 0.0f, lower_h))) {
             eyebrow("IMU");
             ImGui::SameLine();
             right_align(150.0f);
@@ -606,8 +633,8 @@ int main(int argc, char** argv) {
             imu_rows.insert(imu_rows.end(), ch.gyro.begin(), ch.gyro.end());
             static const char* kImuLabels[] = {"ax","ay","az","gx","gy","gz"};
             static const theme::Rgba kImuColors[] = {
-                theme::kTheta, theme::kTheta, theme::kTheta,
-                theme::kDelta, theme::kDelta, theme::kDelta};
+                theme::kTrace, theme::kTrace, theme::kTrace,
+                theme::kTraceAlt, theme::kTraceAlt, theme::kTraceAlt};
             DisplaySettings imu_disp; imu_disp.highpass = false; imu_disp.notch = false;
             plot_lanes("imu", imu_win, imu_rows, kImuLabels, kImuColors,
                        static_cast<int>(std::min<std::size_t>(imu_rows.size(), 6)),

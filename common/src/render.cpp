@@ -264,28 +264,35 @@ void draw_spectrum(const double* mags, int n_bins, double bin_hz,
 void band_cell(ImVec2 pos, ImVec2 size, double value, theme::Rgba color, bool dominant) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float v = static_cast<float>(std::clamp(value, 0.0, 1.0));
+    (void)color;   // hue identifies the band in the header, not in every cell
 
-    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
-                      u32(theme::kRaised), theme::kRadiusSm);
-    // Opacity encodes magnitude. Floor it slightly so a near-zero band is
-    // still visibly a cell rather than a hole in the grid.
-    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
-                      u32(color, 0.10f + 0.75f * v), theme::kRadiusSm);
-    if (dominant) {
-        dl->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y),
-                    u32(theme::kText, 0.75f), theme::kRadiusSm, 0, 1.5f);
+    // A bar, not a filled box.
+    //
+    // Five hues x twenty cells produced a grid of muddy coloured rectangles
+    // that read as bad spreadsheet conditional formatting, and the dark low-
+    // value fills looked disabled rather than small. Length is a far more
+    // precise visual encoding than opacity, and dropping to one neutral hue
+    // removes nineteen competing colours from the panel.
+    const float track_h = 3.0f;
+    const float track_y = pos.y + size.y - track_h;
+
+    dl->AddRectFilled(ImVec2(pos.x, track_y),
+                      ImVec2(pos.x + size.x, track_y + track_h),
+                      u32(theme::kLine), track_h * 0.5f);
+    if (v > 0.001f) {
+        dl->AddRectFilled(ImVec2(pos.x, track_y),
+                          ImVec2(pos.x + size.x * v, track_y + track_h),
+                          u32(dominant ? theme::kAccent : theme::kMuted, dominant ? 1.0f : 0.55f),
+                          track_h * 0.5f);
     }
 
     char lbl[8];
     std::snprintf(lbl, sizeof(lbl), "%.2f", value);
-    if (fonts().mono) ImGui::PushFont(fonts().mono);
+    // Value in the UI face, not mono: mono on every number is a terminal look.
     const ImVec2 ts = ImGui::CalcTextSize(lbl);
-    // Flip the label to dark once the fill is bright enough that white text
-    // would fall below a readable contrast ratio.
-    const ImU32 text_col = (v > 0.55f) ? u32(theme::kGround, 0.95f) : u32(theme::kText, 0.9f);
-    dl->AddText(ImVec2(pos.x + (size.x - ts.x) * 0.5f, pos.y + (size.y - ts.y) * 0.5f),
-                text_col, lbl);
-    if (fonts().mono) ImGui::PopFont();
+    dl->AddText(ImVec2(pos.x, pos.y + (size.y - track_h - ts.y) * 0.5f),
+                u32(dominant ? theme::kText : theme::kMuted, dominant ? 1.0f : 0.8f), lbl);
+    (void)ts;
 }
 
 // ---------------------------------------------------------------------------
@@ -442,23 +449,29 @@ void end_card() {
 }
 
 void eyebrow(const char* text) {
+    // Real letter-spacing, drawn glyph by glyph with a small extra advance.
+    //
+    // The previous version injected a space character between every letter,
+    // which is roughly 0.5em of tracking where the intent was 0.08em. It read
+    // as "E E G" and was the most conspicuously amateur thing on screen.
     if (fonts().eyebrow) ImGui::PushFont(fonts().eyebrow);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(theme::kMuted.r, theme::kMuted.g,
-                                                theme::kMuted.b, 1.0f));
-    // ImGui has no letter-spacing, so the effect is approximated by spacing
-    // out an uppercase copy of the label.
-    char buf[128];
-    std::size_t o = 0;
-    for (const char* p = text; *p && o + 3 < sizeof(buf); ++p) {
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    const ImU32 col = u32(theme::kMuted);
+    const float tracking = ImGui::GetFontSize() * 0.09f;
+
+    float x = start.x;
+    for (const char* p = text; *p != '\0'; ++p) {
         char ch = *p;
         if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 32);
-        buf[o++] = ch;
-        if (p[1] != '\0') buf[o++] = ' ';
+        const char one[2] = {ch, '\0'};
+        dl->AddText(ImVec2(x, start.y), col, one);
+        x += ImGui::CalcTextSize(one).x + tracking;
     }
-    buf[o] = '\0';
-    ImGui::TextUnformatted(buf);
-    ImGui::PopStyleColor();
+    const float h = ImGui::GetTextLineHeight();
     if (fonts().eyebrow) ImGui::PopFont();
+    ImGui::Dummy(ImVec2(x - start.x, h));
 }
 
 void readout(const char* value, const char* unit, theme::Rgba color) {
