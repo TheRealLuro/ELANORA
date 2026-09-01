@@ -577,10 +577,15 @@ bool begin_card(const char* id, ImVec2 size) {
                                                    theme::kPanel.b, 0.72f));
     ImGui::PushStyleColor(ImGuiCol_Border,  ImVec4(theme::kLine.r, theme::kLine.g,
                                                    theme::kLine.b, 1.0f));
-    // No border flag: the panel is separated from the ground by fill contrast
-    // and spacing alone. An outline around every card is chrome competing with
-    // the content it is supposed to frame.
-    const bool open = ImGui::BeginChild(id, size, ImGuiChildFlags_None,
+    // AlwaysUseWindowPadding is REQUIRED here, not optional.
+    //
+    // ImGui gives a child window zero padding unless it has a border or this
+    // flag. Dropping ImGuiChildFlags_Border to draw the panel edge by hand
+    // therefore silently discarded the WindowPadding pushed above, and every
+    // card rendered its content flush against the left edge -- labels sitting
+    // on the border, row highlights spilling outside the card.
+    const bool open = ImGui::BeginChild(id, size,
+                                        ImGuiChildFlags_AlwaysUseWindowPadding,
                                         ImGuiWindowFlags_NoScrollbar);
     if (open) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
