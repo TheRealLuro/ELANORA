@@ -326,13 +326,30 @@ int main(int argc, char** argv) {
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->WorkPos);
         ImGui::SetNextWindowSize(vp->WorkSize);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS5, theme::kS5));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS6, theme::kS5));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::Begin("##root", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollbar);
 
-        const float gap = theme::kS3;
+        // Ambient light behind the glass. Placed off the working area so the
+        // panels sit over a gradient rather than a flat field -- translucency
+        // over a uniform colour shows nothing at all.
+        {
+            const ImVec2 wp = vp->WorkPos;
+            const ImVec2 ws = vp->WorkSize;
+            // Centres pushed below the header band and alphas cut: at the
+            // first values the teal glow washed out the header text entirely,
+            // which is a contrast failure, not a style choice.
+            soft_glow(ImVec2(wp.x + ws.x * 0.14f, wp.y + ws.y * 0.34f),
+                      ws.y * 0.78f, theme::kAccent, 0.032f);
+            soft_glow(ImVec2(wp.x + ws.x * 0.86f, wp.y + ws.y * 0.30f),
+                      ws.y * 0.66f, theme::kAlpha, 0.022f);
+            soft_glow(ImVec2(wp.x + ws.x * 0.50f, wp.y + ws.y * 1.02f),
+                      ws.y * 0.70f, theme::kDelta, 0.026f);
+        }
+
+        const float gap = theme::kS4;
 
         // ---- header --------------------------------------------------------
         if (fonts().subhead) ImGui::PushFont(fonts().subhead);
@@ -380,7 +397,7 @@ int main(int argc, char** argv) {
             text_colored(theme::kBad, "NO DATA %.0fs", stale);
             ImGui::SameLine(0.0f, theme::kS3);
         }
-        text_mono(theme::kFaint, "EEG %d Hz   IMU %d Hz   space to connect",
+        text_mono(theme::kMuted, "EEG %d Hz   IMU %d Hz   space to connect",
                   ch.sr_eeg, ch.sr_imu);
 
         ImGui::Dummy(ImVec2(1.0f, theme::kS1));
@@ -388,7 +405,7 @@ int main(int argc, char** argv) {
         // ---- metric row ----------------------------------------------------
         const float avail  = ImGui::GetContentRegionAvail().x;
         const float card_w = (avail - gap * 3.0f) / 4.0f;
-        const float card_h = 152.0f;
+        const float card_h = 164.0f;
 
         const auto& focus = spec[static_cast<std::size_t>(focus_sensor)];
         int dom = 0;
@@ -526,14 +543,23 @@ int main(int argc, char** argv) {
                             electrode_name(static_cast<SensorId>(r)));
                 if (fonts().subhead) ImGui::PopFont();
 
-                // Quality sits beside the electrode name, on its baseline --
-                // it belongs to the sensor, not underneath the whole row.
+                // Status as a symbol rather than a word. A check is recognised
+                // before "good" is read, which matters when the question is
+                // "is this electrode seated" and both your hands are busy.
                 const auto& q = qual[static_cast<std::size_t>(r)];
-                if (fonts().eyebrow) ImGui::PushFont(fonts().eyebrow);
-                dl->AddText(ImVec2(ro.x, ty + line_h + 12.0f),
-                            ImGui::GetColorU32(v4(quality_color(q.q))),
-                            q.flat ? "no contact" : q.railed ? "saturated" : quality_name(q.q));
-                if (fonts().eyebrow) ImGui::PopFont();
+                const int level = (q.q == Quality::Good) ? 0
+                                : (q.q == Quality::Fair) ? 1 : 2;
+                status_glyph(ImVec2(ro.x + 9.0f, ty + line_h + 16.0f), 9.0f,
+                             level, quality_color(q.q));
+                // The specific failure still gets words, because "no contact"
+                // and "saturated" call for different fixes.
+                if (level != 0) {
+                    if (fonts().eyebrow) ImGui::PushFont(fonts().eyebrow);
+                    dl->AddText(ImVec2(ro.x + 24.0f, ty + line_h + 10.0f),
+                                ImGui::GetColorU32(v4(quality_color(q.q))),
+                                q.flat ? "no contact" : q.railed ? "saturated" : "weak");
+                    if (fonts().eyebrow) ImGui::PopFont();
+                }
 
                 for (int b = 0; b < kBandCount; ++b) {
                     const double val = sm_band[static_cast<std::size_t>(r)]
@@ -556,9 +582,11 @@ int main(int argc, char** argv) {
                     // 10px and rounded, with a gradient along its length. The
                     // previous 3px hairline was too thin to compare at a
                     // glance, which defeated the point of drawing it at all.
-                    const float bw = col_w - theme::kS5;
-                    const float by = ty + line_h + 16.0f;
-                    value_bar(ImVec2(cx, by), ImVec2(bw, 10.0f), val,
+                    // Wider and taller: the bar should be the second thing you
+                    // see after the number, not a detail under it.
+                    const float bw = col_w - theme::kS4;
+                    const float by = ty + line_h + 18.0f;
+                    value_bar(ImVec2(cx, by), ImVec2(bw, 14.0f), val,
                               theme::band_color(b), is_dom);
                 }
 

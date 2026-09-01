@@ -173,6 +173,18 @@ void ring_gauge(ImVec2 center, float radius, float thickness, double value,
 void value_bar(ImVec2 pos, ImVec2 size, double value, theme::Rgba color,
                bool emphasised);
 
+// Large soft radial glow, built from concentric circles with falling alpha.
+//
+// Glassmorphism needs something behind the glass. Translucency over a flat
+// colour shows nothing at all -- the panel just looks slightly darker. These
+// go down first, and the frosted panels pick up their colour variation.
+void soft_glow(ImVec2 center, float radius, theme::Rgba color, float alpha);
+
+// Status glyph: a filled disc carrying a check, a bang, or a cross.
+// A symbol is recognised before a word is read, which is what you want when
+// the question is "is this electrode on properly" and your hands are busy.
+void status_glyph(ImVec2 center, float radius, int level, theme::Rgba color);
+
 // ---------------------------------------------------------------------------
 // Card chrome
 //

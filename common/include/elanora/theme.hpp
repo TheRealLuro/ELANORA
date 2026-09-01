@@ -58,7 +58,7 @@ struct Rgba { float r, g, b, a; };
 // default tech-dashboard template. Neutral greys let a single accent mean
 // something; blue greys under a blue accent are mush.
 inline constexpr Rgba kGround  {0.043f, 0.043f, 0.047f, 1.0f};  // #0B0B0C
-inline constexpr Rgba kPanel   {0.082f, 0.082f, 0.090f, 1.0f};  // #151517
+inline constexpr Rgba kPanel   {0.098f, 0.098f, 0.110f, 1.0f};  // #19191C
 inline constexpr Rgba kPanelHi {0.106f, 0.106f, 0.118f, 1.0f};  // #1B1B1E
 inline constexpr Rgba kRaised  {0.125f, 0.125f, 0.137f, 1.0f};  // #202023
 inline constexpr Rgba kLine    {0.173f, 0.173f, 0.188f, 1.0f};  // #2C2C30
@@ -107,8 +107,8 @@ inline constexpr float kS6 = 32.0f;
 
 // Generous, continuous-feeling radii. Tight corners read as utilitarian
 // chrome; softer ones let the panel recede and the data come forward.
-inline constexpr float kRadius   = 12.0f;
-inline constexpr float kRadiusSm = 8.0f;
+inline constexpr float kRadius   = 18.0f;
+inline constexpr float kRadiusSm = 11.0f;
 
 // Per-band colour by Band index, so callers do not repeat the mapping.
 const Rgba& band_color(int band_index);

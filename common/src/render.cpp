@@ -505,6 +505,48 @@ void value_bar(ImVec2 pos, ImVec2 size, double value, theme::Rgba color,
                         ImGui::GetColorU32(ImVec4(color.r, color.g, color.b, a)));
 }
 
+void soft_glow(ImVec2 center, float radius, theme::Rgba color, float alpha) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    // Enough steps that the falloff is smooth. At 26 the concentric circles
+    // were individually visible as banding across the top of the window.
+    constexpr int kSteps = 64;
+    // Quadratic falloff reads as light; linear reads as a set of rings.
+    for (int i = kSteps; i >= 1; --i) {
+        const float t = static_cast<float>(i) / kSteps;
+        const float a = alpha * (1.0f - t) * (1.0f - t);
+        dl->AddCircleFilled(center, radius * t,
+                            ImGui::GetColorU32(ImVec4(color.r, color.g, color.b, a)), 48);
+    }
+}
+
+void status_glyph(ImVec2 center, float radius, int level, theme::Rgba color) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImU32 c = u32(color);
+
+    dl->AddCircleFilled(center, radius, u32(color, 0.16f), 24);
+    dl->AddCircle(center, radius, u32(color, 0.55f), 24, 1.2f);
+
+    const float s = radius * 0.52f;
+    if (level == 0) {
+        // Check.
+        dl->PathLineTo(ImVec2(center.x - s * 0.85f, center.y + s * 0.05f));
+        dl->PathLineTo(ImVec2(center.x - s * 0.20f, center.y + s * 0.68f));
+        dl->PathLineTo(ImVec2(center.x + s * 0.92f, center.y - s * 0.66f));
+        dl->PathStroke(c, 0, 2.0f);
+    } else if (level == 1) {
+        // Bang.
+        dl->AddLine(ImVec2(center.x, center.y - s * 0.9f),
+                    ImVec2(center.x, center.y + s * 0.25f), c, 2.0f);
+        dl->AddCircleFilled(ImVec2(center.x, center.y + s * 0.78f), 1.5f, c, 8);
+    } else {
+        // Cross.
+        dl->AddLine(ImVec2(center.x - s * 0.7f, center.y - s * 0.7f),
+                    ImVec2(center.x + s * 0.7f, center.y + s * 0.7f), c, 2.0f);
+        dl->AddLine(ImVec2(center.x + s * 0.7f, center.y - s * 0.7f),
+                    ImVec2(center.x - s * 0.7f, center.y + s * 0.7f), c, 2.0f);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Card chrome
 // ---------------------------------------------------------------------------
@@ -521,9 +563,11 @@ bool begin_card(const char* id, ImVec2 size) {
         drop_shadow(p0, p1, theme::kRadius);
     }
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme::kRadius);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS5, theme::kS4));
+    // Translucent, so the ambient glows behind show through as colour
+    // variation. An opaque panel over a glow just hides it.
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(theme::kPanel.r, theme::kPanel.g,
-                                                   theme::kPanel.b, 1.0f));
+                                                   theme::kPanel.b, 0.72f));
     ImGui::PushStyleColor(ImGuiCol_Border,  ImVec4(theme::kLine.r, theme::kLine.g,
                                                    theme::kLine.b, 1.0f));
     // No border flag: the panel is separated from the ground by fill contrast
@@ -538,16 +582,17 @@ bool begin_card(const char* id, ImVec2 size) {
         const float h = ImGui::GetWindowHeight();
         dl->PushClipRect(p0, ImVec2(p0.x + w, p0.y + h), true);
 
-        // No gradient. A 52px wash across the top of a 136px card read as a
-        // separate grey header strip that lined up with nothing, which looked
-        // like a mistake rather than depth.
-        //
-        // A one-pixel lit edge along the top is enough. This is what makes a
-        // panel read as a raised plane rather than a lighter rectangle -- the
-        // same trick a bevel uses, at a thousandth of the visual cost.
-        dl->AddLine(ImVec2(p0.x + theme::kRadius, p0.y + 0.5f),
-                    ImVec2(p0.x + w - theme::kRadius, p0.y + 0.5f),
-                    u32(theme::kLineHi, 0.55f), 1.0f);
+        // The glass edge. A luminous hairline around the whole panel is what
+        // separates frosted glass from a translucent rectangle: real glass
+        // catches light on its rim, and the eye reads that rim as thickness.
+        dl->AddRect(ImVec2(p0.x + 0.5f, p0.y + 0.5f),
+                    ImVec2(p0.x + w - 0.5f, p0.y + h - 0.5f),
+                    u32(theme::kLineHi, 0.75f), theme::kRadius, 0, 1.0f);
+
+        // Brighter still along the top edge, where light would fall.
+        dl->AddLine(ImVec2(p0.x + theme::kRadius, p0.y + 1.0f),
+                    ImVec2(p0.x + w - theme::kRadius, p0.y + 1.0f),
+                    u32(theme::kText, 0.10f), 1.0f);
         dl->PopClipRect();
     }
     return open;
