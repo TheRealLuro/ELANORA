@@ -160,7 +160,7 @@ bool toggle_switch(const char* id, bool* value);
 // nothing occupies a plane, so nothing has weight.
 // ---------------------------------------------------------------------------
 void drop_shadow(ImVec2 p0, ImVec2 p1, float rounding,
-                 float spread = 14.0f, int layers = 10);
+                 float spread = 22.0f, int layers = 26);
 
 // Ring gauge. A value from 0..1 swept clockwise from twelve o'clock, with
 // rounded ends and a recessed track behind it. Large, round and unmistakable

@@ -433,11 +433,17 @@ void drop_shadow(ImVec2 p0, ImVec2 p1, float rounding, float spread, int layers)
     // Concentric rounded rects, alpha falling with distance. Offset downward
     // so the light reads as coming from above, which is what makes the panel
     // sit on the page rather than float ambiguously.
+    //
+    // The falloff is cubic and the layer count high, because a shadow built
+    // from few layers with a linear ramp shows its construction: you see a
+    // stack of discrete rounded rectangles instead of a blur. Each layer is
+    // nearly transparent and they accumulate into something smooth.
     for (int i = layers; i >= 1; --i) {
         const float t = static_cast<float>(i) / static_cast<float>(layers);
         const float e = spread * t;
-        const float a = 0.10f * (1.0f - t) + 0.020f;
-        const float dy = 5.0f * t;
+        const float falloff = (1.0f - t) * (1.0f - t) * (1.0f - t);
+        const float a = 0.052f * falloff + 0.004f;
+        const float dy = 6.0f * t * t;
         dl->AddRectFilled(ImVec2(p0.x - e, p0.y - e + dy),
                           ImVec2(p1.x + e, p1.y + e + dy),
                           ImGui::GetColorU32(ImVec4(0, 0, 0, a)),
