@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 #include "elanora/render.hpp"
 #include "elanora/theme.hpp"
@@ -43,37 +44,115 @@ const char* phase_label(Phase p) {
     return "";
 }
 
-// The composite gate over one second, drawn as a filled step waveform.
-// Reading a stacked design from four numbers is impossible; reading it from
-// the shape it will actually make is immediate.
-void draw_envelope(const StimulusDesign& d, ImVec2 origin, ImVec2 size) {
+// One lane per enabled layer, each pulse drawn as a rounded block.
+//
+// The previous version filled a rectangle with one vertical line per pixel
+// column, which produced a hard-edged barcode with no shape and no way to tell
+// the layers apart. Pulses are geometry, so they are drawn as geometry: one
+// rounded rect per gate opening, in that layer's colour, on its own row.
+//
+// Separate rows rather than a summed blob because the useful question about a
+// stacked design is which rhythms are running and where they coincide, and a
+// single summed trace answers neither.
+void draw_stimulus_lanes(const StimulusDesign& d, ImVec2 origin, ImVec2 size) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
+    constexpr double kWindow = 1.0;   // seconds shown
 
     dl->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y),
                       ImGui::GetColorU32(v4(theme::kGround)), theme::kRadiusSm);
 
-    // Quarter-second gridlines, so a rate can be counted off the picture.
+    const float label_w = 64.0f;
+    const float axis_h  = 15.0f;
+    const float plot_x  = origin.x + label_w;
+    const float plot_w  = size.x - label_w - theme::kS3;
+
+    // Quarter-second guides, behind the pulses.
     for (int i = 1; i < 4; ++i) {
-        const float x = origin.x + size.x * (i / 4.0f);
-        dl->AddLine(ImVec2(x, origin.y + 4.0f), ImVec2(x, origin.y + size.y - 4.0f),
-                    ImGui::GetColorU32(v4(theme::kLine)), 1.0f);
+        const float x = plot_x + plot_w * (i / 4.0f);
+        dl->AddLine(ImVec2(x, origin.y + 6.0f), ImVec2(x, origin.y + size.y - axis_h),
+                    ImGui::GetColorU32(ImVec4(theme::kLine.r, theme::kLine.g,
+                                              theme::kLine.b, 0.7f)), 1.0f);
     }
 
-    const theme::Rgba col = (d.mode == StimMode::Stacked) ? theme::kAccent : theme::kAlpha;
-    const int cols = std::max(8, static_cast<int>(size.x));
-    const float base = origin.y + size.y - 5.0f;
-    const float span = size.y - 12.0f;
-
-    for (int i = 0; i < cols; ++i) {
-        const double t = static_cast<double>(i) / cols;    // one second
-        const float v = static_cast<float>(std::clamp(d.envelope_at(t), 0.0, 1.0));
-        if (v <= 0.001f) continue;
-        const float x = origin.x + static_cast<float>(i);
-        dl->AddLine(ImVec2(x, base), ImVec2(x, base - v * span),
-                    ImGui::GetColorU32(ImVec4(col.r, col.g, col.b, 0.85f)), 1.0f);
+    // Only enabled layers get a row. In Single mode just the one that plays,
+    // because showing rows for frequencies that will not sound is a lie about
+    // what the round does.
+    std::vector<int> rows;
+    for (int i = 0; i < static_cast<int>(d.layers.size()); ++i) {
+        if (!d.layers[static_cast<std::size_t>(i)].enabled) continue;
+        rows.push_back(i);
+        if (d.mode == StimMode::Single) break;
     }
-    dl->AddRect(origin, ImVec2(origin.x + size.x, origin.y + size.y),
-                ImGui::GetColorU32(v4(theme::kLine)), theme::kRadiusSm, 0, 1.0f);
+
+    if (rows.empty()) {
+        const char* msg = "no layers enabled";
+        const ImVec2 ts = ImGui::CalcTextSize(msg);
+        dl->AddText(ImVec2(origin.x + (size.x - ts.x) * 0.5f,
+                           origin.y + (size.y - ts.y) * 0.5f),
+                    ImGui::GetColorU32(v4(theme::kFaint)), msg);
+        return;
+    }
+
+    const float body_h = size.y - axis_h - theme::kS2;
+    const float gap    = 6.0f;
+    const float lane_h = std::min(30.0f,
+        (body_h - gap * (rows.size() - 1)) / static_cast<float>(rows.size()));
+
+    for (std::size_t r = 0; r < rows.size(); ++r) {
+        const Layer& l = d.layers[static_cast<std::size_t>(rows[r])];
+        const theme::Rgba col = theme::band_color(rows[r] % kBandCount);
+        const float top = origin.y + theme::kS2 + (lane_h + gap) * static_cast<float>(r);
+
+        // Recessed track for the lane, so a silent gap still reads as part of
+        // the row rather than as empty card.
+        dl->AddRectFilled(ImVec2(plot_x, top), ImVec2(plot_x + plot_w, top + lane_h),
+                          ImGui::GetColorU32(ImVec4(1, 1, 1, 0.03f)), lane_h * 0.35f);
+
+        if (fonts().mono) ImGui::PushFont(fonts().mono);
+        char lbl[16];
+        std::snprintf(lbl, sizeof(lbl), "%.1f Hz", l.hz);
+        dl->AddText(ImVec2(origin.x + theme::kS2,
+                           top + (lane_h - ImGui::GetTextLineHeight()) * 0.5f),
+                    ImGui::GetColorU32(ImVec4(col.r, col.g, col.b, 0.9f)), lbl);
+        if (fonts().mono) ImGui::PopFont();
+
+        // Pulse geometry, computed rather than sampled: period from the rate,
+        // width from the duty cycle. Amplitude sets the block height so a quiet
+        // layer looks quiet.
+        const double period = 1.0 / std::max(l.hz, 0.01);
+        const float  amp_h  = lane_h * static_cast<float>(std::clamp(l.amp, 0.1, 1.0));
+        const float  y0     = top + (lane_h - amp_h) * 0.5f;
+        const float  r_px   = std::min(4.0f, amp_h * 0.4f);
+
+        for (int k = 0; k < 4000; ++k) {
+            const double t0 = period * k;
+            if (t0 >= kWindow) break;
+            const double t1 = std::min(t0 + period * d.duty, kWindow);
+
+            const float x0 = plot_x + static_cast<float>(t0 / kWindow) * plot_w;
+            const float x1 = plot_x + static_cast<float>(t1 / kWindow) * plot_w;
+            // Never thinner than a couple of pixels: at 45 Hz a true-width
+            // pulse would vanish and the lane would look empty.
+            const float w = std::max(2.5f, x1 - x0);
+
+            dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + w, y0 + amp_h),
+                              ImGui::GetColorU32(ImVec4(col.r, col.g, col.b, 0.92f)),
+                              r_px);
+        }
+    }
+
+    // Time axis.
+    if (fonts().eyebrow) ImGui::PushFont(fonts().eyebrow);
+    for (int i = 0; i <= 4; ++i) {
+        char t[12];
+        std::snprintf(t, sizeof(t), "%.2fs", i * 0.25);
+        const float x = plot_x + plot_w * (i / 4.0f);
+        const ImVec2 ts = ImGui::CalcTextSize(t);
+        dl->AddText(ImVec2(x - (i == 0 ? 0.0f : i == 4 ? ts.x : ts.x * 0.5f),
+                           origin.y + size.y - axis_h + 2.0f),
+                    ImGui::GetColorU32(v4(theme::kFaint)), t);
+    }
+    if (fonts().eyebrow) ImGui::PopFont();
 }
 
 // The 20 rounds as pills: done, current, upcoming, with the condition carried
@@ -371,12 +450,12 @@ void draw_collector(CollectorState& st,
             }
             ImGui::SameLine();
             right_align(230.0f);
-            ImGui::TextColored(v4(theme::kFaint), "composite envelope, 1 second");
+            ImGui::TextColored(v4(theme::kFaint), "gate pattern, 1 second");
 
             const ImVec2 eo = ImGui::GetCursorScreenPos();
             const float ew = ImGui::GetContentRegionAvail().x;
             const float eh = std::max(40.0f, ImGui::GetContentRegionAvail().y - 4.0f);
-            draw_envelope(st.design, eo, ImVec2(ew, eh));
+            draw_stimulus_lanes(st.design, eo, ImVec2(ew, eh));
             ImGui::Dummy(ImVec2(ew, eh));
         }
         end_card();
