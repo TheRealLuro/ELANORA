@@ -173,6 +173,10 @@ void ring_gauge(ImVec2 center, float radius, float thickness, double value,
 void value_bar(ImVec2 pos, ImVec2 size, double value, theme::Rgba color,
                bool emphasised);
 
+// Draws text centred on a point, in the current font. Centring by hand at
+// every call site is where alignment drifts.
+void text_centered(ImVec2 center, const char* text, theme::Rgba color);
+
 // Large soft radial glow, built from concentric circles with falling alpha.
 //
 // Glassmorphism needs something behind the glass. Translucency over a flat

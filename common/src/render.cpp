@@ -476,33 +476,40 @@ void value_bar(ImVec2 pos, ImVec2 size, double value, theme::Rgba color,
     const float v = static_cast<float>(std::clamp(value, 0.0, 1.0));
     const float r = size.y * 0.5f;
 
-    // Recessed track.
+    // Recessed track, fully opaque. A translucent track picks up whatever is
+    // behind the card and stops reading as a groove.
     dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
-                      u32(theme::kGround, 0.85f), r);
+                      u32(theme::kGround), r);
+    dl->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y),
+                u32(theme::kLine, 0.9f), r, 0, 1.0f);
     if (v <= 0.002f) return;
 
-    const float w = std::max(size.y, size.x * v);   // never thinner than round
-    const ImVec2 e(pos.x + w, pos.y + size.y);
+    // One solid rounded fill.
+    //
+    // The previous version used AddRectFilledMultiColor for a gradient, which
+    // CANNOT round its corners, so the ends were patched with circles -- that
+    // patching is what looked dirty. And emphasis was carried by alpha, which
+    // is literally why the quiet bars looked see-through. Both fixed: solid
+    // fill, and de-emphasis by darkening the colour instead of thinning it.
+    const float m = emphasised ? 1.0f : 0.42f;
+    const ImU32 fill = ImGui::GetColorU32(ImVec4(color.r * m, color.g * m, color.b * m, 1.0f));
 
-    // Two-stop gradient along the length: the fill has direction, which a flat
-    // block does not. Alpha carries emphasis so the non-dominant bands recede
-    // without needing a second colour.
-    const float a = emphasised ? 1.0f : 0.34f;
-    dl->PushClipRect(pos, e, true);
-    dl->AddRectFilledMultiColor(
-        pos, e,
-        ImGui::GetColorU32(ImVec4(color.r * 0.62f, color.g * 0.62f, color.b * 0.62f, a)),
-        ImGui::GetColorU32(ImVec4(color.r, color.g, color.b, a)),
-        ImGui::GetColorU32(ImVec4(color.r, color.g, color.b, a)),
-        ImGui::GetColorU32(ImVec4(color.r * 0.62f, color.g * 0.62f, color.b * 0.62f, a)));
-    dl->PopClipRect();
-    // The gradient call cannot round its corners, so the rounded silhouette is
-    // restored by redrawing the ends as circles.
-    dl->AddCircleFilled(ImVec2(pos.x + r, pos.y + r), r,
-                        ImGui::GetColorU32(ImVec4(color.r * 0.62f, color.g * 0.62f,
-                                                  color.b * 0.62f, a)));
-    dl->AddCircleFilled(ImVec2(e.x - r, pos.y + r), r,
-                        ImGui::GetColorU32(ImVec4(color.r, color.g, color.b, a)));
+    const float w = std::max(size.y, size.x * v);   // never narrower than round
+    dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + size.y), fill, r);
+
+    // A single bright pixel along the top of the fill, which is what makes a
+    // solid bar read as a filled volume rather than a flat swatch.
+    if (emphasised && w > size.y) {
+        dl->AddLine(ImVec2(pos.x + r, pos.y + 1.0f),
+                    ImVec2(pos.x + w - r, pos.y + 1.0f),
+                    ImGui::GetColorU32(ImVec4(1, 1, 1, 0.22f)), 1.0f);
+    }
+}
+
+void text_centered(ImVec2 center, const char* text, theme::Rgba color) {
+    const ImVec2 ts = ImGui::CalcTextSize(text);
+    ImGui::GetWindowDrawList()->AddText(
+        ImVec2(center.x - ts.x * 0.5f, center.y - ts.y * 0.5f), u32(color), text);
 }
 
 void soft_glow(ImVec2 center, float radius, theme::Rgba color, float alpha) {

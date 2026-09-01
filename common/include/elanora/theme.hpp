@@ -58,11 +58,11 @@ struct Rgba { float r, g, b, a; };
 // default tech-dashboard template. Neutral greys let a single accent mean
 // something; blue greys under a blue accent are mush.
 inline constexpr Rgba kGround  {0.043f, 0.043f, 0.047f, 1.0f};  // #0B0B0C
-inline constexpr Rgba kPanel   {0.098f, 0.098f, 0.110f, 1.0f};  // #19191C
+inline constexpr Rgba kPanel   {0.145f, 0.145f, 0.161f, 1.0f};  // #252529
 inline constexpr Rgba kPanelHi {0.106f, 0.106f, 0.118f, 1.0f};  // #1B1B1E
-inline constexpr Rgba kRaised  {0.125f, 0.125f, 0.137f, 1.0f};  // #202023
+inline constexpr Rgba kRaised  {0.192f, 0.192f, 0.212f, 1.0f};  // #313136
 inline constexpr Rgba kLine    {0.173f, 0.173f, 0.188f, 1.0f};  // #2C2C30
-inline constexpr Rgba kLineHi  {0.227f, 0.227f, 0.251f, 1.0f};  // #3A3A40
+inline constexpr Rgba kLineHi  {0.310f, 0.310f, 0.341f, 1.0f};  // #4F4F57
 
 // Text: neutral through the whole ramp.
 inline constexpr Rgba kText    {0.980f, 0.980f, 0.984f, 1.0f};  // #FAFAFB

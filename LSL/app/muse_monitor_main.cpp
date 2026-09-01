@@ -154,8 +154,12 @@ double motion_rms(const std::vector<Sample>& win, const std::vector<int>& rows) 
     return std::sqrt(var / static_cast<double>(mag.size()));
 }
 
-// One card shape for the entire metric row: a ring on the left carrying the
-// value as a proportion, the headline beside it, a caption underneath.
+// One card shape for the entire metric row: a centred stack of eyebrow, ring,
+// headline and caption.
+//
+// Left-aligned content in a card leaves a dead corner, and four cards each
+// leaving it in a different place is what made the row look unresolved. A
+// centred stack is symmetric, so nothing has to be balanced by eye.
 //
 // `fraction` is what the ring sweeps; `value` is the text that means something
 // to a person. They are deliberately separate -- 9.6 Hz is meaningless as an
@@ -165,31 +169,38 @@ void metric_card(const char* id, float width, float height,
                  const char* sub, double fraction, const char* ring_text,
                  bool valid) {
     if (begin_card(id, ImVec2(width, height))) {
-        eyebrow(label);
+        const ImVec2 p0 = ImGui::GetWindowPos();
+        const float w = ImGui::GetWindowWidth();
+        const float cx = p0.x + w * 0.5f;
 
-        const ImVec2 o = ImGui::GetCursorScreenPos();
-        const float r = 38.0f;
-        const ImVec2 c(o.x + r + 4.0f, o.y + r + 8.0f);
+        // Eyebrow, centred.
+        if (fonts().eyebrow) ImGui::PushFont(fonts().eyebrow);
+        const float eyebrow_h = ImGui::GetTextLineHeight();
+        text_centered(ImVec2(cx, p0.y + theme::kS4 + eyebrow_h * 0.5f), label,
+                      theme::kMuted);
+        if (fonts().eyebrow) ImGui::PopFont();
 
-        ring_gauge(c, r, 10.0f, valid ? fraction : 0.0,
+        const float r = 34.0f;
+        const float ring_cy = p0.y + theme::kS4 + eyebrow_h + theme::kS4 + r;
+        ring_gauge(ImVec2(cx, ring_cy), r, 9.0f, valid ? fraction : 0.0,
                    valid ? value_color : theme::kFaint, theme::kGround);
 
         if (ring_text != nullptr && ring_text[0] != '\0') {
             if (fonts().body) ImGui::PushFont(fonts().body);
-            const ImVec2 ts = ImGui::CalcTextSize(ring_text);
-            ImGui::GetWindowDrawList()->AddText(
-                ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f),
-                ImGui::GetColorU32(v4(valid ? theme::kDim : theme::kFaint)), ring_text);
+            text_centered(ImVec2(cx, ring_cy), ring_text,
+                          valid ? theme::kDim : theme::kFaint);
             if (fonts().body) ImGui::PopFont();
         }
 
-        ImGui::SetCursorScreenPos(ImVec2(c.x + r + theme::kS4, o.y + 10.0f));
-        ImGui::BeginGroup();
         if (fonts().metric) ImGui::PushFont(fonts().metric);
-        ImGui::TextColored(v4(valid ? value_color : theme::kFaint), "%s", value);
+        const float vh = ImGui::GetTextLineHeight();
+        text_centered(ImVec2(cx, ring_cy + r + theme::kS4 + vh * 0.5f), value,
+                      valid ? value_color : theme::kFaint);
         if (fonts().metric) ImGui::PopFont();
-        ImGui::TextColored(v4(theme::kMuted), "%s", sub);
-        ImGui::EndGroup();
+
+        const float sub_y = ring_cy + r + theme::kS4 + vh + theme::kS1;
+        text_centered(ImVec2(cx, sub_y + ImGui::GetTextLineHeight() * 0.5f), sub,
+                      theme::kMuted);
     }
     end_card();
 }
@@ -405,7 +416,7 @@ int main(int argc, char** argv) {
         // ---- metric row ----------------------------------------------------
         const float avail  = ImGui::GetContentRegionAvail().x;
         const float card_w = (avail - gap * 3.0f) / 4.0f;
-        const float card_h = 164.0f;
+        const float card_h = 214.0f;
 
         const auto& focus = spec[static_cast<std::size_t>(focus_sensor)];
         int dom = 0;
@@ -484,14 +495,16 @@ int main(int argc, char** argv) {
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 if (fonts().eyebrow) ImGui::PushFont(fonts().eyebrow);
                 for (int b = 0; b < kBandCount; ++b) {
-                    const float x = o.x + lbl_w + col_w * b;
+                    const char* nm = band_name(static_cast<Band>(b));
+                    const float ccx = o.x + lbl_w + col_w * b + col_w * 0.5f - theme::kS3;
+                    const float tw = ImGui::CalcTextSize(nm).x;
                     // A dot carries the band's hue; the label stays neutral, so
-                    // the header is legible instead of a row of colours.
-                    dl->AddCircleFilled(ImVec2(x + 3.0f, o.y + 6.0f), 3.0f,
+                    // the header is legible instead of a row of colours. Both
+                    // centre over the column the values sit in.
+                    dl->AddCircleFilled(ImVec2(ccx - tw * 0.5f - 8.0f, o.y + 6.0f), 3.0f,
                                         ImGui::GetColorU32(v4(theme::band_color(b))));
-                    dl->AddText(ImVec2(x + 12.0f, o.y),
-                                ImGui::GetColorU32(v4(theme::kMuted)),
-                                band_name(static_cast<Band>(b)));
+                    dl->AddText(ImVec2(ccx - tw * 0.5f, o.y),
+                                ImGui::GetColorU32(v4(theme::kMuted)), nm);
                 }
                 dl->AddText(ImVec2(o.x + lbl_w + grid_w, o.y),
                             ImGui::GetColorU32(v4(theme::kMuted)), "AMPLITUDE");
@@ -570,9 +583,9 @@ int main(int argc, char** argv) {
                     char txt[16];
                     std::snprintf(txt, sizeof(txt), "%.2f", val);
                     if (fonts().monoBig) ImGui::PushFont(fonts().monoBig);
-                    dl->AddText(ImVec2(cx, ty),
-                                ImGui::GetColorU32(v4(is_dom ? theme::kText : theme::kFaint)),
-                                txt);
+                    text_centered(ImVec2(cx + col_w * 0.5f - theme::kS3,
+                                         ty + ImGui::GetTextLineHeight() * 0.5f),
+                                  txt, is_dom ? theme::kText : theme::kMuted);
                     if (fonts().monoBig) ImGui::PopFont();
 
                     // A bar under each value. The number gives the exact
@@ -584,10 +597,10 @@ int main(int argc, char** argv) {
                     // glance, which defeated the point of drawing it at all.
                     // Wider and taller: the bar should be the second thing you
                     // see after the number, not a detail under it.
-                    const float bw = col_w - theme::kS4;
+                    const float bw = col_w - theme::kS5;
                     const float by = ty + line_h + 18.0f;
-                    value_bar(ImVec2(cx, by), ImVec2(bw, 14.0f), val,
-                              theme::band_color(b), is_dom);
+                    value_bar(ImVec2(cx + (col_w - theme::kS3 - bw) * 0.5f, by),
+                              ImVec2(bw, 13.0f), val, theme::band_color(b), is_dom);
                 }
 
                 if (fonts().mono) ImGui::PushFont(fonts().mono);
