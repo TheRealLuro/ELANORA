@@ -12,6 +12,7 @@
 //
 //   muse_monitor                 connect to the first Muse 2 found
 //   muse_monitor --synthetic     run against BrainFlow's synthetic board
+//   muse_monitor --demo          lifelike synthesised EEG, for judging the UI
 //   muse_monitor --autoconnect   connect on launch
 //   muse_monitor --frames N      render N frames then exit (automation)
 //   muse_monitor --verbose       leave BrainFlow's stderr logging on
@@ -154,6 +155,225 @@ double motion_rms(const std::vector<Sample>& win, const std::vector<int>& rows) 
     return std::sqrt(var / static_cast<double>(mag.size()));
 }
 
+// ---------------------------------------------------------------------------
+// Demo signal.
+//
+// BrainFlow's synthetic board emits a pure sine per channel, so every band
+// power it produces is constant -- nothing on this dashboard can be evaluated
+// against it, because nothing moves.
+//
+// This generates something that behaves like EEG instead: pink-ish 1/f noise
+// for the background, alpha arriving in spindles rather than as a constant
+// tone, occasional eye blinks on the frontal channels, and slow drift in the
+// electrode amplitudes. Clearly labelled as demo data -- it is for judging the
+// interface, never for judging the science.
+// ---------------------------------------------------------------------------
+class DemoSource {
+public:
+    DemoSource() {
+        for (int c = 0; c < kSensorCount; ++c) {
+            auto& ch = ch_[static_cast<std::size_t>(c)];
+            ch.alpha_hz  = 9.2 + 0.9 * c * 0.25;
+            ch.next_burst = 0.6 + 0.9 * c;
+            ch.base_uv   = 12.0 + 4.0 * c;
+            ch.frontal   = (c == 1 || c == 2);
+            for (double& r : ch.pink) r = urand() * 2.0 - 1.0;
+        }
+    }
+
+    // Produces one window ending "now", in the Sample shape the rest of the
+    // app already consumes, so nothing downstream needs a demo branch.
+    std::vector<Sample> window(double seconds, int sr) {
+        const int n = static_cast<int>(seconds * sr);
+        std::vector<Sample> out;
+        out.reserve(static_cast<std::size_t>(n));
+        const double dt = 1.0 / sr;
+
+        for (int i = 0; i < n; ++i) {
+            t_ += dt;
+            Sample smp;
+            smp.ts = t_;
+            smp.values.assign(static_cast<std::size_t>(kSensorCount) + 2u, 0.0);
+            smp.values[0] = 0.0;
+            for (int c = 0; c < kSensorCount; ++c) {
+                smp.values[static_cast<std::size_t>(c) + 1u] = step_channel(c, dt);
+            }
+            smp.values[static_cast<std::size_t>(kSensorCount) + 1u] = t_;
+            out.push_back(std::move(smp));
+        }
+        return out;
+    }
+
+    double motion() const { return 0.012 + 0.010 * std::sin(t_ * 0.23); }
+
+private:
+    struct Ch {
+        double pink[6]{};
+        int    counter = 0;
+        double running = 0.0;
+        double alpha_phase = 0.0, alpha_hz = 10.0;
+        double burst_t = -1.0, burst_len = 0.0, next_burst = 1.0;
+        double blink_t = -1.0, next_blink = 3.0;
+        double base_uv = 14.0;
+        bool   frontal = false;
+    };
+
+    static double urand() {
+        static unsigned long long s = 0x9E3779B97F4A7C15ull;
+        s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+        return static_cast<double>(s % 100000) / 100000.0;
+    }
+
+    // Voss-McCartney: octave-spaced random walks summed. Real EEG has a 1/f
+    // spectrum; white noise looks obviously wrong, with no slow wander at all.
+    double pink_next(Ch& c) {
+        c.counter++;
+        for (int i = 0; i < 6; ++i) {
+            if (c.counter % (1 << i) == 0) {
+                c.running -= c.pink[i];
+                c.pink[i] = urand() * 2.0 - 1.0;
+                c.running += c.pink[i];
+                break;
+            }
+        }
+        return c.running / 6.0 + (urand() - 0.5) * 0.25;
+    }
+
+    double step_channel(int idx, double dt) {
+        Ch& c = ch_[static_cast<std::size_t>(idx)];
+
+        // Alpha in spindles: 1-2 s bursts, then nothing. A constant alpha tone
+        // is the classic tell of a faked EEG trace.
+        if (c.burst_t < 0.0 && t_ > c.next_burst) {
+            c.burst_t = 0.0;
+            c.burst_len = 0.9 + urand() * 1.6;
+            c.next_burst = t_ + c.burst_len + 0.8 + urand() * 3.5;
+        }
+        double burst = 0.0;
+        if (c.burst_t >= 0.0) {
+            c.burst_t += dt;
+            const double pr = c.burst_t / c.burst_len;
+            if (pr >= 1.0) c.burst_t = -1.0;
+            else burst = std::sin(3.14159265358979 * pr);
+        }
+
+        double blink = 0.0;
+        if (c.frontal) {
+            if (c.blink_t < 0.0 && t_ > c.next_blink) {
+                c.blink_t = 0.0;
+                c.next_blink = t_ + 3.0 + urand() * 6.0;
+            }
+            if (c.blink_t >= 0.0) {
+                c.blink_t += dt;
+                const double b = c.blink_t / 0.28;
+                if (b >= 1.0) c.blink_t = -1.0;
+                else blink = -std::sin(3.14159265358979 * b) * std::exp(-b * 1.1);
+            }
+        }
+
+        c.alpha_phase += 6.28318530717958 * c.alpha_hz * dt;
+
+        // Slow amplitude drift, the way a settling headband behaves.
+        const double drift = 1.0 + 0.18 * std::sin(t_ * 0.07 + idx);
+        // Scaled so RMS lands in the 10-30 uV band real resting EEG occupies,
+        // and the alpha burst is weighted well below the 1/f background so
+        // dominance actually changes hands between bands over time rather than
+        // alpha winning every window.
+        return (pink_next(c) * 2.6
+                + burst * std::sin(c.alpha_phase) * 1.05
+                + blink * 4.0) * c.base_uv * drift * 2.2;
+    }
+
+    std::array<Ch, kSensorCount> ch_{};
+    double t_ = 1.0e6;
+};
+
+// Electrode card: a head seen from above with the four sensors in their real
+// positions, each coloured by quality.
+//
+// A ring reading "4/4" with a "4" inside it says the same thing three times and
+// still does not say WHICH electrode is bad -- which is the only thing you
+// actually need when one goes. Position is the answer, so the card shows
+// position.
+void electrode_card(const char* id, float width, float height,
+                    const std::array<ChannelQuality, kSensorCount>& qual,
+                    int usable, Quality worst) {
+    if (begin_card(id, ImVec2(width, height))) {
+        const ImVec2 p0 = ImGui::GetWindowPos();
+        const float w = ImGui::GetWindowWidth();
+        const float cx = p0.x + w * 0.5f;
+
+        if (fonts().eyebrow) ImGui::PushFont(fonts().eyebrow);
+        const float eyebrow_h = ImGui::GetTextLineHeight();
+        text_centered(ImVec2(cx, p0.y + theme::kS4 + eyebrow_h * 0.5f), "Electrodes",
+                      theme::kMuted);
+        if (fonts().eyebrow) ImGui::PopFont();
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const float r = 34.0f;
+        const float cy = p0.y + theme::kS4 + eyebrow_h + theme::kS4 + r;
+
+        // Head outline, nose at the top so left and right are unambiguous.
+        dl->AddCircleFilled(ImVec2(cx, cy), r, ImGui::GetColorU32(v4(theme::kGround)), 48);
+        dl->AddCircle(ImVec2(cx, cy), r, ImGui::GetColorU32(v4(theme::kLineHi)), 48, 1.4f);
+        dl->AddTriangleFilled(ImVec2(cx - 5.0f, cy - r + 1.0f),
+                              ImVec2(cx + 5.0f, cy - r + 1.0f),
+                              ImVec2(cx, cy - r - 6.0f),
+                              ImGui::GetColorU32(v4(theme::kLineHi)));
+
+        // Muse 2 positions: AF7/AF8 on the forehead, TP9/TP10 at the ears.
+        struct Pos { float x, y; };
+        static const Pos kPos[kSensorCount] = {
+            {-0.92f,  0.10f},   // TP9  left ear
+            {-0.48f, -0.62f},   // AF7  left forehead
+            { 0.48f, -0.62f},   // AF8  right forehead
+            { 0.92f,  0.10f}    // TP10 right ear
+        };
+
+        for (int i = 0; i < kSensorCount; ++i) {
+            const auto& q = qual[static_cast<std::size_t>(i)];
+            const theme::Rgba col = quality_color(q.q);
+            const ImVec2 pt(cx + kPos[i].x * r, cy + kPos[i].y * r);
+
+            // A bad sensor pulses, so it is found without reading anything.
+            const float pulse = (q.q == Quality::Bad)
+                ? 0.55f + 0.45f * std::sin(static_cast<float>(ImGui::GetTime()) * 5.0f)
+                : 1.0f;
+            dl->AddCircleFilled(pt, 9.0f, ImGui::GetColorU32(
+                ImVec4(col.r, col.g, col.b, 0.22f * pulse)), 20);
+            dl->AddCircleFilled(pt, 5.5f, ImGui::GetColorU32(
+                ImVec4(col.r, col.g, col.b, pulse)), 20);
+
+            if (fonts().eyebrow) ImGui::PushFont(fonts().eyebrow);
+            const char* nm = electrode_name(static_cast<SensorId>(i));
+            const float tw = ImGui::CalcTextSize(nm).x;
+            const float lx = pt.x + (kPos[i].x < 0.0f ? -(tw + 13.0f) : 13.0f);
+            dl->AddText(ImVec2(lx, pt.y - ImGui::GetTextLineHeight() * 0.5f),
+                        ImGui::GetColorU32(v4(q.q == Quality::Good ? theme::kMuted : col)),
+                        nm);
+            if (fonts().eyebrow) ImGui::PopFont();
+        }
+
+        char v[16];
+        std::snprintf(v, sizeof(v), "%d/4", usable);
+        if (fonts().metric) ImGui::PushFont(fonts().metric);
+        const float vh = ImGui::GetTextLineHeight();
+        text_centered(ImVec2(cx, cy + r + theme::kS4 + vh * 0.5f), v,
+                      usable == kSensorCount ? theme::kGood
+                      : usable >= 3          ? theme::kWarn
+                                             : theme::kBad);
+        if (fonts().metric) ImGui::PopFont();
+
+        text_centered(ImVec2(cx, cy + r + theme::kS4 + vh + theme::kS1 +
+                                 ImGui::GetTextLineHeight() * 0.5f),
+                      usable == kSensorCount ? "all seated"
+                      : worst == Quality::Bad ? "reseat headband"
+                                              : "one degraded",
+                      theme::kMuted);
+    }
+    end_card();
+}
+
 // One card shape for the entire metric row: a centred stack of eyebrow, ring,
 // headline and caption.
 //
@@ -208,11 +428,12 @@ void metric_card(const char* id, float width, float height,
 }  // namespace
 
 int main(int argc, char** argv) {
-    bool synthetic = false, autoconnect = false, verbose = false;
+    bool synthetic = false, autoconnect = false, verbose = false, demo = false;
     int max_frames = -1;
     const char* shot_path = nullptr;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--synthetic") == 0)        synthetic = true;
+        else if (std::strcmp(argv[i], "--demo") == 0)        demo = true;
         else if (std::strcmp(argv[i], "--autoconnect") == 0) autoconnect = true;
         else if (std::strcmp(argv[i], "--verbose") == 0)     verbose = true;
         else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc)
@@ -268,7 +489,8 @@ int main(int argc, char** argv) {
             status_error = true;
         }
     };
-    if (autoconnect) do_connect();
+    if (autoconnect && !demo) do_connect();
+    if (demo) { status = "Demo data"; status_error = false; }
 
     // Every number eases toward its measurement, so a value can be read while
     // it changes rather than only between changes.
@@ -277,6 +499,7 @@ int main(int argc, char** argv) {
     std::array<Smoothed, kSensorCount> sm_peak{};
     Smoothed sm_motion, sm_usable;
 
+    DemoSource demo_source;
     std::array<Spectrum, kSensorCount> spec{};
     std::array<ChannelQuality, kSensorCount> qual{};
     double analysed_at = 0.0;
@@ -295,13 +518,23 @@ int main(int argc, char** argv) {
             }
         }
 
-        const ChannelMap& ch = device.channels();
-        const double t_eeg = recorder.latest_ts(BrainFlowPresets::DEFAULT_PRESET);
+        ChannelMap ch = device.channels();
+        double t_eeg = recorder.latest_ts(BrainFlowPresets::DEFAULT_PRESET);
         const double t_imu = recorder.latest_ts(BrainFlowPresets::AUXILIARY_PRESET);
-        const auto eeg_win = recorder.window(BrainFlowPresets::DEFAULT_PRESET,
-                                             t_eeg - kWindowSeconds, t_eeg);
+        std::vector<Sample> eeg_win;
         const auto imu_win = recorder.window(BrainFlowPresets::AUXILIARY_PRESET,
                                              t_imu - kWindowSeconds, t_imu);
+        if (demo) {
+            // Demo data flows through the identical analysis path, so what the
+            // interface shows here is what it will show on a real headset.
+            ch.eeg = {1, 2, 3, 4};
+            ch.sr_eeg = 256;
+            eeg_win = demo_source.window(kWindowSeconds, ch.sr_eeg);
+            t_eeg = eeg_win.empty() ? 0.0 : eeg_win.back().ts;
+        } else {
+            eeg_win = recorder.window(BrainFlowPresets::DEFAULT_PRESET,
+                                      t_eeg - kWindowSeconds, t_eeg);
+        }
 
         // Analysis runs on its own cadence, not per frame: a 256-point Welch
         // per sensor at 60 Hz is pure waste, and the smoothing above already
@@ -331,7 +564,7 @@ int main(int argc, char** argv) {
             }
         }
         sm_usable.set(static_cast<double>(usable), dt);
-        sm_motion.set(motion_rms(imu_win, ch.accel), dt);
+        sm_motion.set(demo ? demo_source.motion() : motion_rms(imu_win, ch.accel), dt);
 
         // ---- frame ---------------------------------------------------------
         const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -438,16 +671,7 @@ int main(int argc, char** argv) {
                     sub, dom_v, ring, focus.valid);
 
         ImGui::SameLine(0.0f, gap);
-        std::snprintf(buf, sizeof(buf), "%.0f/4", sm_usable.value);
-        std::snprintf(ring, sizeof(ring), "%.0f", sm_usable.value);
-        metric_card("##m2", card_w, card_h, "Electrodes", buf,
-                    usable == kSensorCount ? theme::kGood
-                    : usable >= 3          ? theme::kWarn
-                                           : theme::kBad,
-                    usable == kSensorCount ? "all good"
-                    : worst == Quality::Bad ? "check headband"
-                                            : "one degraded",
-                    sm_usable.value / kSensorCount, ring, true);
+        electrode_card("##m2", card_w, card_h, qual, usable, worst);
 
         ImGui::SameLine(0.0f, gap);
         const bool still = sm_motion.value < 0.05;
