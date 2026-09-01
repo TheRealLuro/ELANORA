@@ -152,6 +152,28 @@ bool segmented(const char* id, const char* const* labels, int count,
 bool toggle_switch(const char* id, bool* value);
 
 // ---------------------------------------------------------------------------
+// Depth
+//
+// ImGui has no shadow primitive, so one is built from concentric rounded rects
+// with falling alpha. Without it every panel is a flat fill a shade off the
+// page, which is the single biggest reason a dark UI reads as unfinished --
+// nothing occupies a plane, so nothing has weight.
+// ---------------------------------------------------------------------------
+void drop_shadow(ImVec2 p0, ImVec2 p1, float rounding,
+                 float spread = 14.0f, int layers = 10);
+
+// Ring gauge. A value from 0..1 swept clockwise from twelve o'clock, with
+// rounded ends and a recessed track behind it. Large, round and unmistakable
+// at a glance -- a number in a box is precise but has no shape to recognise.
+void ring_gauge(ImVec2 center, float radius, float thickness, double value,
+                theme::Rgba color, theme::Rgba track);
+
+// Chunky rounded bar with a two-stop gradient along its length.
+// Replaces a 3px hairline: a bar you can see is a bar you can compare.
+void value_bar(ImVec2 pos, ImVec2 size, double value, theme::Rgba color,
+               bool emphasised);
+
+// ---------------------------------------------------------------------------
 // Card chrome
 //
 // ImGui has no card primitive, so these wrap BeginChild with the panel fill,

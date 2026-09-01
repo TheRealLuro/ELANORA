@@ -424,10 +424,102 @@ bool toggle_switch(const char* id, bool* value) {
 }
 
 // ---------------------------------------------------------------------------
+// Depth
+// ---------------------------------------------------------------------------
+
+void drop_shadow(ImVec2 p0, ImVec2 p1, float rounding, float spread, int layers) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (layers < 1) return;
+    // Concentric rounded rects, alpha falling with distance. Offset downward
+    // so the light reads as coming from above, which is what makes the panel
+    // sit on the page rather than float ambiguously.
+    for (int i = layers; i >= 1; --i) {
+        const float t = static_cast<float>(i) / static_cast<float>(layers);
+        const float e = spread * t;
+        const float a = 0.10f * (1.0f - t) + 0.020f;
+        const float dy = 5.0f * t;
+        dl->AddRectFilled(ImVec2(p0.x - e, p0.y - e + dy),
+                          ImVec2(p1.x + e, p1.y + e + dy),
+                          ImGui::GetColorU32(ImVec4(0, 0, 0, a)),
+                          rounding + e);
+    }
+}
+
+void ring_gauge(ImVec2 center, float radius, float thickness, double value,
+                theme::Rgba color, theme::Rgba track) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float v = static_cast<float>(std::clamp(value, 0.0, 1.0));
+    constexpr float kTau  = 6.28318530717958647692f;
+    constexpr float kStart = -1.57079632679489661923f;   // twelve o'clock
+
+    dl->PathArcTo(center, radius, 0.0f, kTau, 64);
+    dl->PathStroke(u32(track), 0, thickness);
+
+    if (v <= 0.0005f) return;
+
+    const float end = kStart + kTau * v;
+    dl->PathArcTo(center, radius, kStart, end, 96);
+    dl->PathStroke(u32(color), 0, thickness);
+
+    // ImGui strokes with butt caps; circles at both ends round them off, which
+    // is most of what makes a ring look finished rather than cut.
+    const float r = thickness * 0.5f;
+    dl->AddCircleFilled(ImVec2(center.x + std::cos(kStart) * radius,
+                               center.y + std::sin(kStart) * radius), r, u32(color));
+    dl->AddCircleFilled(ImVec2(center.x + std::cos(end) * radius,
+                               center.y + std::sin(end) * radius), r, u32(color));
+}
+
+void value_bar(ImVec2 pos, ImVec2 size, double value, theme::Rgba color,
+               bool emphasised) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float v = static_cast<float>(std::clamp(value, 0.0, 1.0));
+    const float r = size.y * 0.5f;
+
+    // Recessed track.
+    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
+                      u32(theme::kGround, 0.85f), r);
+    if (v <= 0.002f) return;
+
+    const float w = std::max(size.y, size.x * v);   // never thinner than round
+    const ImVec2 e(pos.x + w, pos.y + size.y);
+
+    // Two-stop gradient along the length: the fill has direction, which a flat
+    // block does not. Alpha carries emphasis so the non-dominant bands recede
+    // without needing a second colour.
+    const float a = emphasised ? 1.0f : 0.34f;
+    dl->PushClipRect(pos, e, true);
+    dl->AddRectFilledMultiColor(
+        pos, e,
+        ImGui::GetColorU32(ImVec4(color.r * 0.62f, color.g * 0.62f, color.b * 0.62f, a)),
+        ImGui::GetColorU32(ImVec4(color.r, color.g, color.b, a)),
+        ImGui::GetColorU32(ImVec4(color.r, color.g, color.b, a)),
+        ImGui::GetColorU32(ImVec4(color.r * 0.62f, color.g * 0.62f, color.b * 0.62f, a)));
+    dl->PopClipRect();
+    // The gradient call cannot round its corners, so the rounded silhouette is
+    // restored by redrawing the ends as circles.
+    dl->AddCircleFilled(ImVec2(pos.x + r, pos.y + r), r,
+                        ImGui::GetColorU32(ImVec4(color.r * 0.62f, color.g * 0.62f,
+                                                  color.b * 0.62f, a)));
+    dl->AddCircleFilled(ImVec2(e.x - r, pos.y + r), r,
+                        ImGui::GetColorU32(ImVec4(color.r, color.g, color.b, a)));
+}
+
+// ---------------------------------------------------------------------------
 // Card chrome
 // ---------------------------------------------------------------------------
 
 bool begin_card(const char* id, ImVec2 size) {
+    // The shadow belongs to the parent, not the child: a child window clips to
+    // its own rect, so anything drawn inside it can never appear outside.
+    // Resolve the card rect here and lay the shadow down first.
+    {
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const ImVec2 p1(p0.x + (size.x > 0.0f ? size.x : avail.x + size.x),
+                        p0.y + (size.y > 0.0f ? size.y : avail.y + size.y));
+        drop_shadow(p0, p1, theme::kRadius);
+    }
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme::kRadius);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(theme::kPanel.r, theme::kPanel.g,

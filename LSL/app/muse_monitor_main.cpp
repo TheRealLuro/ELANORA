@@ -154,21 +154,42 @@ double motion_rms(const std::vector<Sample>& win, const std::vector<int>& rows) 
     return std::sqrt(var / static_cast<double>(mag.size()));
 }
 
-// One metric card: eyebrow, a large value, a secondary line. Everything the
-// operator reads at a glance is one of these.
+// One card shape for the entire metric row: a ring on the left carrying the
+// value as a proportion, the headline beside it, a caption underneath.
+//
+// `fraction` is what the ring sweeps; `value` is the text that means something
+// to a person. They are deliberately separate -- 9.6 Hz is meaningless as an
+// arc until you know it is 9.6 out of a 45 Hz range.
 void metric_card(const char* id, float width, float height,
                  const char* label, const char* value, theme::Rgba value_color,
-                 const char* sub, theme::Rgba sub_color) {
+                 const char* sub, double fraction, const char* ring_text,
+                 bool valid) {
     if (begin_card(id, ImVec2(width, height))) {
         eyebrow(label);
-        ImGui::Dummy(ImVec2(1.0f, theme::kS2));
 
+        const ImVec2 o = ImGui::GetCursorScreenPos();
+        const float r = 38.0f;
+        const ImVec2 c(o.x + r + 4.0f, o.y + r + 8.0f);
+
+        ring_gauge(c, r, 10.0f, valid ? fraction : 0.0,
+                   valid ? value_color : theme::kFaint, theme::kGround);
+
+        if (ring_text != nullptr && ring_text[0] != '\0') {
+            if (fonts().body) ImGui::PushFont(fonts().body);
+            const ImVec2 ts = ImGui::CalcTextSize(ring_text);
+            ImGui::GetWindowDrawList()->AddText(
+                ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f),
+                ImGui::GetColorU32(v4(valid ? theme::kDim : theme::kFaint)), ring_text);
+            if (fonts().body) ImGui::PopFont();
+        }
+
+        ImGui::SetCursorScreenPos(ImVec2(c.x + r + theme::kS4, o.y + 10.0f));
+        ImGui::BeginGroup();
         if (fonts().metric) ImGui::PushFont(fonts().metric);
-        ImGui::TextColored(v4(value_color), "%s", value);
+        ImGui::TextColored(v4(valid ? value_color : theme::kFaint), "%s", value);
         if (fonts().metric) ImGui::PopFont();
-
-        ImGui::Dummy(ImVec2(1.0f, 2.0f));
-        ImGui::TextColored(v4(sub_color), "%s", sub);
+        ImGui::TextColored(v4(theme::kMuted), "%s", sub);
+        ImGui::EndGroup();
     }
     end_card();
 }
@@ -367,7 +388,7 @@ int main(int argc, char** argv) {
         // ---- metric row ----------------------------------------------------
         const float avail  = ImGui::GetContentRegionAvail().x;
         const float card_w = (avail - gap * 3.0f) / 4.0f;
-        const float card_h = 136.0f;
+        const float card_h = 152.0f;
 
         const auto& focus = spec[static_cast<std::size_t>(focus_sensor)];
         int dom = 0;
@@ -376,43 +397,50 @@ int main(int argc, char** argv) {
                 focus.bands[static_cast<std::size_t>(dom)]) dom = b;
         }
 
-        char buf[64], sub[96];
-        std::snprintf(sub, sizeof(sub), "%.2f on %s",
-                      sm_band[static_cast<std::size_t>(focus_sensor)]
-                             [static_cast<std::size_t>(dom)].value,
+        char buf[64], sub[96], ring[16];
+
+        const double dom_v = sm_band[static_cast<std::size_t>(focus_sensor)]
+                                    [static_cast<std::size_t>(dom)].value;
+        std::snprintf(ring, sizeof(ring), "%.2f", focus.valid ? dom_v : 0.0);
+        std::snprintf(sub, sizeof(sub), "on %s",
                       electrode_name(static_cast<SensorId>(focus_sensor)));
         metric_card("##m1", card_w, card_h, "Dominant band",
                     focus.valid ? band_name(static_cast<Band>(dom)) : "--",
                     focus.valid ? theme::band_color(dom) : theme::kFaint,
-                    focus.valid ? sub : "no signal", theme::kMuted);
+                    sub, dom_v, ring, focus.valid);
 
         ImGui::SameLine(0.0f, gap);
         std::snprintf(buf, sizeof(buf), "%.0f/4", sm_usable.value);
-        std::snprintf(sub, sizeof(sub), "%s",
-                      usable == kSensorCount ? "all electrodes good"
-                      : worst == Quality::Bad ? "check headband"
-                                              : "one degraded");
+        std::snprintf(ring, sizeof(ring), "%.0f", sm_usable.value);
         metric_card("##m2", card_w, card_h, "Electrodes", buf,
                     usable == kSensorCount ? theme::kGood
                     : usable >= 3          ? theme::kWarn
                                            : theme::kBad,
-                    sub, theme::kMuted);
+                    usable == kSensorCount ? "all good"
+                    : worst == Quality::Bad ? "check headband"
+                                            : "one degraded",
+                    sm_usable.value / kSensorCount, ring, true);
 
         ImGui::SameLine(0.0f, gap);
         const bool still = sm_motion.value < 0.05;
         std::snprintf(buf, sizeof(buf), "%.3f", sm_motion.value);
+        // Normalised against 0.2 rms, which is well into "obviously moving".
+        // A ring needs a ceiling, and an unbounded quantity has to be given one
+        // explicitly rather than left to auto-scale into meaninglessness.
         metric_card("##m3", card_w, card_h, "Head motion", buf,
                     still ? theme::kGood : theme::kWarn,
-                    still ? "still" : "moving, artifacts likely", theme::kMuted);
+                    still ? "still" : "artifacts likely",
+                    std::clamp(sm_motion.value / 0.2, 0.0, 1.0),
+                    still ? "ok" : "!", true);
 
         ImGui::SameLine(0.0f, gap);
-        std::snprintf(buf, sizeof(buf), "%.1f",
-                      sm_peak[static_cast<std::size_t>(focus_sensor)].value);
-        std::snprintf(sub, sizeof(sub), "Hz on %s",
+        const double peak_hz = sm_peak[static_cast<std::size_t>(focus_sensor)].value;
+        std::snprintf(buf, sizeof(buf), "%.1f Hz", peak_hz);
+        std::snprintf(sub, sizeof(sub), "on %s",
                       electrode_name(static_cast<SensorId>(focus_sensor)));
         metric_card("##m4", card_w, card_h, "Spectral peak",
-                    focus.valid ? buf : "--",
-                    focus.valid ? theme::kText : theme::kFaint, sub, theme::kMuted);
+                    focus.valid ? buf : "--", theme::kAccent, sub,
+                    std::clamp(peak_hz / kAnalysisHighHz, 0.0, 1.0), "Hz", focus.valid);
 
         ImGui::Dummy(ImVec2(1.0f, theme::kS1));
 
@@ -524,19 +552,14 @@ int main(int argc, char** argv) {
                     // A bar under each value. The number gives the exact
                     // figure; the bar makes five of them comparable without
                     // reading any of them, which is what a matrix is for.
-                    const float bw = col_w - theme::kS4;
-                    const float by = ty + line_h + 18.0f;
-                    dl->AddRectFilled(ImVec2(cx, by), ImVec2(cx + bw, by + 3.0f),
-                                      ImGui::GetColorU32(v4(theme::kLine)), 1.5f);
-                    if (val > 0.001) {
-                        const float fill = bw * static_cast<float>(std::clamp(val, 0.0, 1.0));
-                        dl->AddRectFilled(
-                            ImVec2(cx, by), ImVec2(cx + fill, by + 3.0f),
-                            ImGui::GetColorU32(ImVec4(
-                                theme::band_color(b).r, theme::band_color(b).g,
-                                theme::band_color(b).b, is_dom ? 1.0f : 0.35f)),
-                            1.5f);
-                    }
+                    //
+                    // 10px and rounded, with a gradient along its length. The
+                    // previous 3px hairline was too thin to compare at a
+                    // glance, which defeated the point of drawing it at all.
+                    const float bw = col_w - theme::kS5;
+                    const float by = ty + line_h + 16.0f;
+                    value_bar(ImVec2(cx, by), ImVec2(bw, 10.0f), val,
+                              theme::band_color(b), is_dom);
                 }
 
                 if (fonts().mono) ImGui::PushFont(fonts().mono);
