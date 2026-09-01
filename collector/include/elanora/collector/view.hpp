@@ -22,9 +22,15 @@ struct CollectorState {
     Survey         survey;
     Durations      durations;
 
-    std::string subject = "P01";
-    std::string trial_id = "S01";
-    uint64_t    seed = 84120;
+    // The only field that changes between people. Kept as a char buffer so
+    // ImGui can edit it directly.
+    char     subject[32] = "P01";
+    int      trial_number = 1;
+    uint64_t seed = 84120;
+
+    // Stimulus design is hidden by default. The protocol is fixed, so the
+    // common case is: type a name, press start.
+    bool advanced_open = false;
 
     double  freq_lo = 0.5;
     double  freq_hi = 45.0;
@@ -39,6 +45,11 @@ struct CollectorState {
     bool    survey_open = false;
 
     CollectorState();
+
+    // A fresh order for every trial. Reusing one seed across subjects would
+    // give everybody the identical round order, which confounds frequency with
+    // position in the session for the entire study rather than just one run.
+    void reseed();
     std::vector<PlannedRound> preview_schedule() const;
 };
 

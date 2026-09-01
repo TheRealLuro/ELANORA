@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <vector>
 
@@ -364,6 +365,14 @@ void draw_survey_modal(CollectorState& st) {
 
 CollectorState::CollectorState() {
     design.layers = {{10.0, 1.0, true}, {6.0, 0.7, true}, {40.0, 0.45, false}};
+    reseed();
+}
+
+void CollectorState::reseed() {
+    // Seeded from the clock so each trial gets its own order, then recorded so
+    // the run stays exactly reconstructible.
+    seed = static_cast<uint64_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count()) ^ 0x9E3779B97F4A7C15ull;
 }
 
 std::vector<PlannedRound> CollectorState::preview_schedule() const {
@@ -383,149 +392,224 @@ void draw_collector(CollectorState& st,
     const float gap = theme::kS4;
 
     if (!st.runner.running() && !st.runner.finished()) {
-        // ---------------------------------------------------------- setup
+        // ------------------------------------------------------------ setup
+        //
+        // The protocol is fixed, so the default screen asks for the one thing
+        // that changes between people and nothing else. Stimulus design is
+        // real but rare, so it lives behind a disclosure rather than occupying
+        // the space where the start button should be.
         const float avail = ImGui::GetContentRegionAvail().x;
-        const float left_w = (avail - gap) * 0.62f;
-        const float right_w = (avail - gap) * 0.38f;
-        const float row_h = 430.0f;
+        const float left_w = (avail - gap) * 0.44f;
+        const float right_w = (avail - gap) * 0.56f;
+        const float row_h = 396.0f;
 
-        if (begin_card("##maker", ImVec2(left_w, row_h))) {
-            eyebrow("Frequency maker");
+        if (begin_card("##who", ImVec2(left_w, row_h))) {
+            eyebrow("New trial");
+            ImGui::Dummy(ImVec2(1, theme::kS4));
+
+            ImGui::TextColored(v4(theme::kMuted), "Subject");
+            ImGui::Dummy(ImVec2(1, 4));
+            ImGui::SetNextItemWidth(-1.0f);
+            if (fonts().subhead) ImGui::PushFont(fonts().subhead);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(theme::kS3, 12.0f));
+            ImGui::InputText("##subject", st.subject, sizeof(st.subject));
+            ImGui::PopStyleVar();
+            if (fonts().subhead) ImGui::PopFont();
+
+            ImGui::Dummy(ImVec2(1, theme::kS3));
+            ImGui::TextColored(v4(theme::kMuted), "Trial");
             ImGui::SameLine();
-            right_align(180.0f);
-            static const char* kModes[] = {"Single", "Stacked"};
-            int mode = (st.design.mode == StimMode::Stacked) ? 1 : 0;
-            if (segmented("##mode", kModes, 2, &mode, 172.0f)) {
-                st.design.mode = mode == 1 ? StimMode::Stacked : StimMode::Single;
+            char tid[32];
+            std::snprintf(tid, sizeof(tid), "S%02d", st.trial_number);
+            right_align(60.0f);
+            if (fonts().mono) ImGui::PushFont(fonts().mono);
+            ImGui::TextColored(v4(theme::kDim), "%s", tid);
+            if (fonts().mono) ImGui::PopFont();
+
+            ImGui::TextColored(v4(theme::kMuted), "Order seed");
+            ImGui::SameLine();
+            right_align(150.0f);
+            if (fonts().mono) ImGui::PushFont(fonts().mono);
+            ImGui::TextColored(v4(theme::kFaint), "%08llx",
+                               static_cast<unsigned long long>(st.seed & 0xFFFFFFFFull));
+            if (fonts().mono) ImGui::PopFont();
+            ImGui::SameLine(0.0f, theme::kS2);
+            if (ImGui::SmallButton("new")) st.reseed();
+
+            ImGui::Dummy(ImVec2(1, theme::kS4));
+            ImGui::PushStyleColor(ImGuiCol_Button, v4(theme::kAccent));
+            ImGui::PushStyleColor(ImGuiCol_Text, v4(theme::kGround));
+            if (fonts().subhead) ImGui::PushFont(fonts().subhead);
+            if (ImGui::Button("Start trial", ImVec2(-1.0f, 56.0f))) {
+                st.runner.start(st.preview_schedule(), st.durations);
+                st.survey.clear();
+                st.survey_open = false;
             }
+            if (fonts().subhead) ImGui::PopFont();
+            ImGui::PopStyleColor(2);
 
             ImGui::Dummy(ImVec2(1, theme::kS2));
-            ImGui::TextColored(v4(theme::kMuted), "%s",
-                st.design.mode == StimMode::Single
-                    ? "Each round plays one frequency alone; the trial sweeps the list."
-                    : "Every enabled layer sounds together, normalised so adding one "
-                      "cannot raise the volume.");
-            ImGui::Dummy(ImVec2(1, theme::kS3));
-
-            int remove = -1;
-            for (int i = 0; i < static_cast<int>(st.design.layers.size()); ++i) {
-                Layer& l = st.design.layers[static_cast<std::size_t>(i)];
-                ImGui::PushID(i);
-
-                const ImVec2 dot = ImGui::GetCursorScreenPos();
-                if (ImGui::InvisibleButton("##on", ImVec2(18.0f, 24.0f))) l.enabled = !l.enabled;
-                const theme::Rgba lc = theme::band_color(i % kBandCount);
-                ImGui::GetWindowDrawList()->AddCircleFilled(
-                    ImVec2(dot.x + 7.0f, dot.y + 12.0f), 6.0f,
-                    ImGui::GetColorU32(ImVec4(lc.r, lc.g, lc.b, l.enabled ? 1.0f : 0.22f)), 16);
-
-                ImGui::SameLine(0.0f, theme::kS2);
-                ImGui::SetNextItemWidth(92.0f);
-                float hz = static_cast<float>(l.hz);
-                if (ImGui::DragFloat("##hz", &hz, 0.1f, 0.5f, 60.0f, "%.1f Hz")) {
-                    l.hz = std::clamp(static_cast<double>(hz), 0.5, 60.0);
-                }
-
-                ImGui::SameLine(0.0f, theme::kS3);
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 96.0f);
-                // Slider works in whole percent. Formatting a 0..1 value with
-                // a percent format printed "1%" for full amplitude.
-                int amp_pct = static_cast<int>(std::lround(l.amp * 100.0));
-                if (ImGui::SliderInt("##amp", &amp_pct, 10, 100, "%d%%",
-                                     ImGuiSliderFlags_AlwaysClamp)) {
-                    l.amp = amp_pct / 100.0;
-                }
-
-                ImGui::SameLine(0.0f, theme::kS3);
-                if (ImGui::Button("Remove", ImVec2(72.0f, 0))) remove = i;
-                ImGui::PopID();
-            }
-            if (remove >= 0 && st.design.layers.size() > 1) {
-                st.design.layers.erase(st.design.layers.begin() + remove);
-            }
-
-            ImGui::Dummy(ImVec2(1, theme::kS1));
-            if (st.design.layers.size() < 6 && ImGui::Button("Add layer", ImVec2(110.0f, 0))) {
-                st.design.layers.push_back(Layer{8.0, 0.6, true});
-            }
-            ImGui::SameLine();
-            right_align(230.0f);
-            ImGui::TextColored(v4(theme::kFaint), "gate pattern, 1 second");
-
-            const ImVec2 eo = ImGui::GetCursorScreenPos();
-            const float ew = ImGui::GetContentRegionAvail().x;
-            const float eh = std::max(40.0f, ImGui::GetContentRegionAvail().y - 4.0f);
-            draw_stimulus_lanes(st.design, eo, ImVec2(ew, eh));
-            ImGui::Dummy(ImVec2(ew, eh));
+            ImGui::TextColored(v4(theme::kFaint),
+                               "Runs on its own. The survey opens after each round.");
         }
         end_card();
 
         ImGui::SameLine(0.0f, gap);
-        if (begin_card("##cfg", ImVec2(right_w, row_h))) {
-            eyebrow("Trial");
+        if (begin_card("##proto", ImVec2(right_w, row_h))) {
+            eyebrow("Protocol");
+            ImGui::SameLine();
+            right_align(120.0f);
+            ImGui::TextColored(v4(theme::kFaint), "fixed for every subject");
             ImGui::Dummy(ImVec2(1, theme::kS3));
 
-            auto row = [](const char* k, const char* fmt, ...) {
-                ImGui::TextColored(v4(theme::kMuted), "%s", k);
-                ImGui::SameLine();
-                va_list args;
-                va_start(args, fmt);
-                char buf[64];
-                std::vsnprintf(buf, sizeof(buf), fmt, args);
-                va_end(args);
-                right_align(ImGui::CalcTextSize(buf).x);
-                if (fonts().mono) ImGui::PushFont(fonts().mono);
-                ImGui::TextColored(v4(theme::kDim), "%s", buf);
-                if (fonts().mono) ImGui::PopFont();
-            };
-
-            row("Subject", "%s", st.subject.c_str());
-            row("Trial", "%s", st.trial_id.c_str());
-            row("Baseline / Stim / Post", "%.0f / %.0f / %.0f s",
-                st.durations.baseline, st.durations.stimulus, st.durations.post);
-            row("Rest", "%.0f s", st.durations.rest);
-            row("Carrier", "%.0f Hz", st.design.carrier_hz);
-            row("Duty", "%.0f %%", st.design.duty * 100.0);
-            row("Seed", "%llu", static_cast<unsigned long long>(st.seed));
-
-            ImGui::Dummy(ImVec2(1, theme::kS3));
             const auto sched = st.preview_schedule();
-            const int rounds = static_cast<int>(sched.size());
-            const double mins = st.durations.round_total() * rounds / 60.0;
+            const double mins = st.durations.round_total() *
+                                static_cast<double>(sched.size()) / 60.0;
 
+            ImGui::BeginGroup();
             if (fonts().metric) ImGui::PushFont(fonts().metric);
-            ImGui::TextColored(v4(theme::kText), "%d", rounds);
+            ImGui::TextColored(v4(theme::kText), "%d", static_cast<int>(sched.size()));
             if (fonts().metric) ImGui::PopFont();
-            ImGui::SameLine(0.0f, theme::kS2);
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 14.0f);
-            ImGui::TextColored(v4(theme::kMuted), "rounds  -  %.0f min", mins);
+            ImGui::TextColored(v4(theme::kMuted), "rounds");
+            ImGui::EndGroup();
 
+            ImGui::SameLine(0.0f, theme::kS6);
+            ImGui::BeginGroup();
+            if (fonts().metric) ImGui::PushFont(fonts().metric);
+            ImGui::TextColored(v4(theme::kText), "%.0f", mins);
+            if (fonts().metric) ImGui::PopFont();
+            ImGui::TextColored(v4(theme::kMuted), "minutes");
+            ImGui::EndGroup();
+
+            ImGui::SameLine(0.0f, theme::kS6);
+            ImGui::BeginGroup();
+            if (fonts().metric) ImGui::PushFont(fonts().metric);
+            ImGui::TextColored(v4(theme::kText), "%.0f", st.durations.round_total());
+            if (fonts().metric) ImGui::PopFont();
+            ImGui::TextColored(v4(theme::kMuted), "s per round");
+            ImGui::EndGroup();
+
+            ImGui::Dummy(ImVec2(1, theme::kS4));
+            ImGui::TextColored(v4(theme::kMuted),
+                               "%d frequencies, %.1f to %.0f Hz, one per round",
+                               st.freq_count, st.freq_lo, st.freq_hi);
             ImGui::Dummy(ImVec2(1, theme::kS2));
-            ImGui::TextColored(v4(theme::kFaint),
-                               "%d stimulus, %d jitter, %d tone controls",
-                               st.freq_count, st.n_jitter, st.n_tone);
+
+            // The frequencies that will actually play, as read-only chips. The
+            // list is the protocol, not something to configure per subject.
+            const auto freqs = geometric_set(st.freq_lo, st.freq_hi, st.freq_count);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float chip_w = (ImGui::GetContentRegionAvail().x - 6.0f * 7.0f) / 8.0f;
+            for (int i = 0; i < static_cast<int>(freqs.size()); ++i) {
+                const ImVec2 c = ImGui::GetCursorScreenPos();
+                dl->AddRectFilled(c, ImVec2(c.x + chip_w, c.y + 26.0f),
+                                  ImGui::GetColorU32(v4(theme::kGround)), theme::kRadiusSm);
+                if (fonts().mono) ImGui::PushFont(fonts().mono);
+                char t[16];
+                std::snprintf(t, sizeof(t), "%.1f", freqs[static_cast<std::size_t>(i)]);
+                const ImVec2 ts = ImGui::CalcTextSize(t);
+                dl->AddText(ImVec2(c.x + (chip_w - ts.x) * 0.5f, c.y + 6.0f),
+                            ImGui::GetColorU32(v4(theme::kDim)), t);
+                if (fonts().mono) ImGui::PopFont();
+                ImGui::Dummy(ImVec2(chip_w, 26.0f));
+                if ((i + 1) % 8 != 0 && i + 1 < static_cast<int>(freqs.size())) {
+                    ImGui::SameLine(0.0f, 6.0f);
+                }
+            }
 
             ImGui::Dummy(ImVec2(1, theme::kS3));
-            ImGui::PushStyleColor(ImGuiCol_Button, v4(theme::kAccent));
-            ImGui::PushStyleColor(ImGuiCol_Text, v4(theme::kGround));
-            if (ImGui::Button("Start trial", ImVec2(-1.0f, 42.0f))) {
-                st.runner.start(sched, st.durations);
-                st.survey.clear();
-                st.survey_open = false;
-            }
-            ImGui::PopStyleColor(2);
+            ImGui::TextColored(v4(theme::kMuted),
+                               "plus %d jitter and %d tone controls, shuffled through",
+                               st.n_jitter, st.n_tone);
         }
         end_card();
 
-        if (begin_card("##sched", ImVec2(0, 96.0f))) {
-            eyebrow("Round schedule");
+        // ---------------------------------------------------------- advanced
+        if (begin_card("##adv", ImVec2(0, st.advanced_open ? 330.0f : 62.0f))) {
+            eyebrow("Stimulus design");
             ImGui::SameLine();
-            right_align(300.0f);
-            ImGui::TextColored(v4(theme::kFaint),
-                               "randomised - controls never adjacent or at either end");
-            ImGui::Dummy(ImVec2(1, theme::kS2));
-            draw_schedule(st.preview_schedule(), -1, ImGui::GetCursorScreenPos(),
-                          ImGui::GetContentRegionAvail().x);
+            right_align(200.0f);
+            ImGui::TextColored(v4(theme::kFaint), "%s",
+                               st.design.mode == StimMode::Single
+                                   ? "automatic sweep" : "custom stack");
+            ImGui::SameLine(0.0f, theme::kS3);
+            if (ImGui::SmallButton(st.advanced_open ? "Hide" : "Change")) {
+                st.advanced_open = !st.advanced_open;
+            }
+
+            if (st.advanced_open) {
+                ImGui::Dummy(ImVec2(1, theme::kS3));
+                static const char* kModes[] = {"Automatic sweep", "Custom stack"};
+                int mode = (st.design.mode == StimMode::Stacked) ? 1 : 0;
+                if (segmented("##mode", kModes, 2, &mode, 320.0f)) {
+                    st.design.mode = mode == 1 ? StimMode::Stacked : StimMode::Single;
+                }
+                ImGui::SameLine(0.0f, theme::kS4);
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6.0f);
+                ImGui::TextColored(v4(theme::kMuted), "%s",
+                    st.design.mode == StimMode::Single
+                        ? "One frequency per round, swept across the protocol list above."
+                        : "Every enabled layer sounds together, in every round.");
+
+                ImGui::Dummy(ImVec2(1, theme::kS3));
+
+                if (st.design.mode == StimMode::Single) {
+                    // Being explicit about this, because the layer editor used
+                    // to sit here doing nothing in this mode -- the trial takes
+                    // its frequencies from the protocol, not from the layers.
+                    ImGui::TextColored(v4(theme::kFaint),
+                        "Nothing to configure. The rounds come from the protocol list.");
+                } else {
+                    int remove = -1;
+                    for (int i = 0; i < static_cast<int>(st.design.layers.size()); ++i) {
+                        Layer& l = st.design.layers[static_cast<std::size_t>(i)];
+                        ImGui::PushID(i);
+
+                        const ImVec2 dot = ImGui::GetCursorScreenPos();
+                        if (ImGui::InvisibleButton("##on", ImVec2(18.0f, 24.0f))) {
+                            l.enabled = !l.enabled;
+                        }
+                        const theme::Rgba lc = theme::band_color(i % kBandCount);
+                        ImGui::GetWindowDrawList()->AddCircleFilled(
+                            ImVec2(dot.x + 7.0f, dot.y + 12.0f), 6.0f,
+                            ImGui::GetColorU32(ImVec4(lc.r, lc.g, lc.b,
+                                                      l.enabled ? 1.0f : 0.22f)), 16);
+
+                        ImGui::SameLine(0.0f, theme::kS2);
+                        ImGui::SetNextItemWidth(96.0f);
+                        float hz = static_cast<float>(l.hz);
+                        if (ImGui::DragFloat("##hz", &hz, 0.1f, 0.5f, 60.0f, "%.1f Hz")) {
+                            l.hz = std::clamp(static_cast<double>(hz), 0.5, 60.0);
+                        }
+
+                        ImGui::SameLine(0.0f, theme::kS3);
+                        ImGui::SetNextItemWidth(220.0f);
+                        int amp_pct = static_cast<int>(std::lround(l.amp * 100.0));
+                        if (ImGui::SliderInt("##amp", &amp_pct, 10, 100, "%d%%",
+                                             ImGuiSliderFlags_AlwaysClamp)) {
+                            l.amp = amp_pct / 100.0;
+                        }
+
+                        ImGui::SameLine(0.0f, theme::kS3);
+                        if (ImGui::Button("Remove", ImVec2(72.0f, 0))) remove = i;
+                        ImGui::PopID();
+                    }
+                    if (remove >= 0 && st.design.layers.size() > 1) {
+                        st.design.layers.erase(st.design.layers.begin() + remove);
+                    }
+                    if (st.design.layers.size() < 6 &&
+                        ImGui::Button("Add layer", ImVec2(110.0f, 0))) {
+                        st.design.layers.push_back(Layer{8.0, 0.6, true});
+                    }
+                }
+
+                ImGui::Dummy(ImVec2(1, theme::kS2));
+                const ImVec2 eo = ImGui::GetCursorScreenPos();
+                const float ew = ImGui::GetContentRegionAvail().x;
+                const float eh = std::max(40.0f, ImGui::GetContentRegionAvail().y - 4.0f);
+                draw_stimulus_lanes(st.design, eo, ImVec2(ew, eh));
+                ImGui::Dummy(ImVec2(ew, eh));
+            }
         }
         end_card();
         return;
@@ -544,6 +628,8 @@ void draw_collector(CollectorState& st,
             ImGui::SetCursorScreenPos(ImVec2(cx - 90.0f, cy + 46.0f));
             if (ImGui::Button("New trial", ImVec2(180.0f, 38.0f))) {
                 st.runner = TrialRunner{};
+                ++st.trial_number;
+                st.reseed();     // a different order for the next run
             }
         }
         end_card();
