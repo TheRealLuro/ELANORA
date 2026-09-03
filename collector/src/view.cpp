@@ -156,8 +156,9 @@ void draw_stimulus_lanes(const StimulusDesign& d, ImVec2 origin, ImVec2 size) {
     if (fonts().eyebrow) ImGui::PopFont();
 }
 
-// The 20 rounds as pills: done, current, upcoming, with the condition carried
-// by an underline so controls are visible in the plan at a glance.
+// The rounds as pills: done, current, upcoming, with the condition carried by
+// an underline so controls are visible in the plan at a glance. A `current`
+// of -1 renders the whole run as upcoming, which is the pre-start preview.
 void draw_schedule(const std::vector<PlannedRound>& sched, int current,
                    ImVec2 origin, float width) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -182,9 +183,14 @@ void draw_schedule(const std::vector<PlannedRound>& sched, int current,
         }
 
         const theme::Rgba cc = condition_color(sched[static_cast<std::size_t>(i)].cond);
+        // Dimming upcoming rounds separates them from finished ones during a
+        // run. In the preview nothing has run yet, so that same rule would
+        // fade every underline to 30% and hide exactly what the preview is for
+        // -- seeing where the controls fall.
+        const float cond_a = (current < 0) ? 1.0f : (done ? 1.0f : 0.30f);
         dl->AddRectFilled(ImVec2(p.x + 4.0f, p.y + h - 4.0f),
                           ImVec2(p.x + w - 4.0f, p.y + h - 2.0f),
-                          ImGui::GetColorU32(ImVec4(cc.r, cc.g, cc.b, done ? 1.0f : 0.30f)),
+                          ImGui::GetColorU32(ImVec4(cc.r, cc.g, cc.b, cond_a)),
                           1.0f);
 
         char lbl[8];
@@ -242,7 +248,12 @@ void draw_survey_modal(CollectorState& st) {
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
                                    vp->WorkPos.y + vp->WorkSize.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(560, 0));
+    ImGui::SetNextWindowSize(ImVec2(600, 0));
+    // Capped so a tall survey scrolls inside the modal instead of running
+    // off the bottom of the display on a laptop screen.
+    ImGui::SetNextWindowSizeConstraints(
+        ImVec2(600, 0),
+        ImVec2(600, ImGui::GetMainViewport()->WorkSize.y * 0.92f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS5, theme::kS5));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, theme::kRadius);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, v4(theme::kPanel));
@@ -295,6 +306,8 @@ void draw_survey_modal(CollectorState& st) {
           &st.survey.relaxation);
     scale("al", "How alert do you feel right now?", "Very drowsy", "Wide awake",
           &st.survey.alertness);
+    scale("pl", "How pleasant was that sound?", "Unpleasant", "Very pleasant",
+          &st.survey.pleasantness);
 
     // The manipulation check. If subjects report a rhythm on jitter controls as
     // often as on stimulus rounds, the control is not working and the jitter
@@ -310,6 +323,54 @@ void draw_survey_modal(CollectorState& st) {
             ImGui::PushStyleColor(ImGuiCol_Text, v4(theme::kGround));
         }
         if (ImGui::Button(kRhythm[i], ImVec2(0, 32.0f))) st.survey.rhythm = i;
+        if (on) ImGui::PopStyleColor(2);
+    }
+    ImGui::Dummy(ImVec2(1, theme::kS3));
+
+    // Perceived breathing. The IMU estimate is indirect -- it infers breathing
+    // from head motion -- so the subject's own sense of it is the only
+    // independent check this hardware can offer.
+    ImGui::TextColored(v4(theme::kDim), "Was your breathing slower or faster than usual?");
+    ImGui::Dummy(ImVec2(1, 4));
+    static const char* kBreath[] = {"Slower", "About the same", "Faster"};
+    for (int i = 0; i < 3; ++i) {
+        if (i > 0) ImGui::SameLine(0.0f, 6.0f);
+        const bool on = (st.survey.breathing_perceived == i);
+        if (on) {
+            ImGui::PushStyleColor(ImGuiCol_Button, v4(theme::kAccent));
+            ImGui::PushStyleColor(ImGuiCol_Text, v4(theme::kGround));
+        }
+        if (ImGui::Button(kBreath[i], ImVec2(0, 32.0f))) st.survey.breathing_perceived = i;
+        if (on) ImGui::PopStyleColor(2);
+    }
+    ImGui::Dummy(ImVec2(1, theme::kS2));
+
+    // Optional, and stored blank when not counted: writing 0 for "did not
+    // count" would put a real number into the dataset that nobody measured.
+    ImGui::TextColored(v4(theme::kFaint), "If you counted your breaths, how many? (optional)");
+    ImGui::SetNextItemWidth(140.0f);
+    int count = st.survey.breaths_self_count;
+    if (ImGui::InputInt("##breaths", &count, 1, 5)) {
+        st.survey.breaths_self_count = (count < 0) ? -1 : count;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Did not count", ImVec2(0, 0))) st.survey.breaths_self_count = -1;
+    ImGui::SameLine();
+    ImGui::TextColored(v4(theme::kFaint), "%s",
+                       st.survey.breaths_self_count < 0 ? "not counted" : "breaths");
+    ImGui::Dummy(ImVec2(1, theme::kS3));
+
+    ImGui::TextColored(v4(theme::kDim), "Any discomfort?");
+    ImGui::Dummy(ImVec2(1, 4));
+    static const char* kDiscomfort[] = {"None", "Slight", "Moderate", "Strong"};
+    for (int i = 0; i < 4; ++i) {
+        if (i > 0) ImGui::SameLine(0.0f, 6.0f);
+        const bool on = (st.survey.discomfort == i);
+        if (on) {
+            ImGui::PushStyleColor(ImGuiCol_Button, v4(i >= 2 ? theme::kWarn : theme::kAccent));
+            ImGui::PushStyleColor(ImGuiCol_Text, v4(theme::kGround));
+        }
+        if (ImGui::Button(kDiscomfort[i], ImVec2(0, 32.0f))) st.survey.discomfort = i;
         if (on) ImGui::PopStyleColor(2);
     }
     ImGui::Dummy(ImVec2(1, theme::kS3));
@@ -336,6 +397,19 @@ void draw_survey_modal(CollectorState& st) {
         if (on) ImGui::PopStyleColor(2);
     }
 
+    ImGui::Dummy(ImVec2(1, theme::kS3));
+    ImGui::TextColored(v4(theme::kFaint), "Anything else worth noting? (optional)");
+    {
+        // The operator types here between rounds; a fixed buffer keeps this out
+        // of the per-frame allocation path.
+        static char note_buf[256] = {0};
+        if (st.survey.note.empty() && note_buf[0] != 0) note_buf[0] = 0;
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputText("##note", note_buf, sizeof(note_buf))) {
+            st.survey.note = note_buf;
+        }
+    }
+
     ImGui::Dummy(ImVec2(1, theme::kS4));
     const bool ok = st.survey.complete();
     ImGui::TextColored(v4(ok ? theme::kMuted : theme::kWarn), "%s",
@@ -349,7 +423,14 @@ void draw_survey_modal(CollectorState& st) {
     const bool last = st.runner.round_index() + 1 >= st.runner.round_count();
     if (ImGui::Button(last ? "Save & finish trial" : "Save & next round",
                       ImVec2(190.0f, 38.0f))) {
+        if (st.recorder.active()) {
+            std::string err;
+            if (!st.recorder.write_survey(st.runner.round_index(), st.survey, err)) {
+                st.io_status = "survey not saved: " + err;
+            }
+        }
         st.runner.advance_round();
+        if (!st.runner.running()) st.recorder.end_trial();
         st.survey.clear();
         st.survey_open = false;
     }
@@ -382,11 +463,73 @@ std::vector<PlannedRound> CollectorState::preview_schedule() const {
 
 void draw_collector(CollectorState& st,
                     const std::array<lsl::ChannelQuality, kSensorCount>& qual,
+                    lsl::StreamRecorder* stream,
+                    const lsl::ChannelMap* channels,
                     float dt) {
+    const double now_ts = stream
+        ? stream->latest_ts(BrainFlowPresets::DEFAULT_PRESET)
+        : 0.0;
+
     // The clock only advances here, never inside a draw helper, so a trial
     // cannot be advanced twice by a layout change.
     if (st.runner.running() && !st.survey_open) {
-        if (st.runner.tick(dt * st.speed)) st.survey_open = true;
+        const bool round_done = st.runner.tick(dt * st.speed);
+
+        // A new round: reconfigure the tone for its condition and start a
+        // fresh marker list.
+        if (st.runner.round_index() != st.last_round) {
+            st.last_round = st.runner.round_index();
+            const PlannedRound& r = st.runner.current();
+            st.audio.configure(st.design, r.cond, r.hz, r.jitter_mean_hz,
+                               st.seed + static_cast<uint64_t>(st.last_round));
+            st.markers.clear();
+            st.round_start_ts = now_ts;
+            st.markers.push_back({now_ts, "baseline_start"});
+            st.last_phase = Phase::Baseline;
+        }
+
+        // Phase boundaries are stamped as they happen. Reconstructing them
+        // afterwards from durations would drift against the sample clock.
+        if (st.runner.phase() != st.last_phase) {
+            st.last_phase = st.runner.phase();
+            const char* ev = st.last_phase == Phase::Stimulus ? "stimulus_start"
+                           : st.last_phase == Phase::Post     ? "post_start"
+                                                              : "rest_start";
+            st.markers.push_back({now_ts, ev});
+        }
+
+        // The gate is the only thing that changes on the audio device; it stays
+        // open for the whole trial so onset is not at the mercy of driver
+        // start-up latency.
+        st.audio.set_gate(st.runner.gate_open());
+
+        if (round_done) {
+            st.audio.set_gate(false);
+            st.markers.push_back({now_ts, "trial_end"});
+            st.survey_open = true;
+
+            // Written per round, never buffered to the end: a crash at round 19
+            // must not cost the eighteen good rounds before it.
+            if (stream && channels && st.recorder.active()) {
+                // Two seconds of margin either side, not one. The breathing
+                // filter runs at 0.1 Hz and its impulse response is long; a
+                // shorter margin would let the filter's start-up transient eat
+                // into real data at the edges of the baseline period.
+                const double t0 = st.round_start_ts - 2.0;
+                const double t1 = now_ts + 2.0;
+                std::string err;
+                if (!st.recorder.write_round(
+                        st.runner.round_index(), st.runner.current(),
+                        stream->window(BrainFlowPresets::DEFAULT_PRESET, t0, t1),
+                        stream->window(BrainFlowPresets::ANCILLARY_PRESET, t0, t1),
+                        stream->window(BrainFlowPresets::AUXILIARY_PRESET, t0, t1),
+                        st.markers, *channels, err)) {
+                    st.io_status = "save failed: " + err;
+                }
+            }
+        }
+    } else if (!st.runner.running()) {
+        st.audio.set_gate(false);
     }
 
     const float gap = theme::kS4;
@@ -401,7 +544,14 @@ void draw_collector(CollectorState& st,
         const float avail = ImGui::GetContentRegionAvail().x;
         const float left_w = (avail - gap) * 0.44f;
         const float right_w = (avail - gap) * 0.56f;
-        const float row_h = 396.0f;
+        // Fill the window. A fixed row height left roughly a third of the page
+        // empty below the cards, which reads as a broken layout rather than as
+        // deliberate space. The disclosure strip keeps its natural height and
+        // the cards above absorb whatever is left, so opening the stimulus
+        // editor takes room from the cards instead of overflowing the window.
+        const float adv_h = st.advanced_open ? 330.0f : 62.0f;
+        const float row_h =
+            std::max(360.0f, ImGui::GetContentRegionAvail().y - adv_h - gap - 4.0f);
 
         if (begin_card("##who", ImVec2(left_w, row_h))) {
             eyebrow("New trial");
@@ -436,23 +586,115 @@ void draw_collector(CollectorState& st,
             ImGui::SameLine(0.0f, theme::kS2);
             if (ImGui::SmallButton("new")) st.reseed();
 
+            // Pre-flight electrode readout.
+            //
+            // The start button already refuses to run on a Bad electrode, but
+            // until now that gate was invisible until it fired -- the operator
+            // pressed start and was told no. Seating a headset is the one task
+            // here that takes real fiddling, so show the thing being gated on
+            // while it can still be fixed.
+            ImGui::Dummy(ImVec2(1, theme::kS5));
+            ImGui::TextColored(v4(theme::kMuted), "Electrodes");
+            ImGui::Dummy(ImVec2(1, 6));
+            for (int i = 0; i < kSensorCount; ++i) {
+                const lsl::ChannelQuality& cq = qual[static_cast<std::size_t>(i)];
+                const theme::Rgba c = cq.q == lsl::Quality::Good   ? theme::kGood
+                                    : cq.q == lsl::Quality::Fair   ? theme::kWarn
+                                                                   : theme::kBad;
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddCircleFilled(
+                    ImVec2(p.x + 5.0f, p.y + ImGui::GetTextLineHeight() * 0.5f), 4.0f,
+                    ImGui::GetColorU32(v4(c)), 16);
+                ImGui::Dummy(ImVec2(16.0f, ImGui::GetTextLineHeight()));
+                ImGui::SameLine(0.0f, 0.0f);
+                ImGui::TextColored(v4(theme::kDim), "%s",
+                                   electrode_name(static_cast<SensorId>(i)));
+                ImGui::SameLine();
+                right_align(60.0f);
+                if (fonts().mono) ImGui::PushFont(fonts().mono);
+                // The reason, not just the verdict: "flat" and "railed" call
+                // for opposite fixes -- reseat versus wait for settling.
+                if (cq.flat)        ImGui::TextColored(v4(c), "flat");
+                else if (cq.railed) ImGui::TextColored(v4(c), "railed");
+                else                ImGui::TextColored(v4(c), "%.0f uV", cq.rms_uv);
+                if (fonts().mono) ImGui::PopFont();
+            }
+
             ImGui::Dummy(ImVec2(1, theme::kS4));
             ImGui::PushStyleColor(ImGuiCol_Button, v4(theme::kAccent));
             ImGui::PushStyleColor(ImGuiCol_Text, v4(theme::kGround));
             if (fonts().subhead) ImGui::PushFont(fonts().subhead);
+            // Electrode gate. Starting a 36-minute session on a bad electrode
+            // wastes the subject's time and produces a quarter of a dataset
+            // that the quality filter will later discard anyway. The override
+            // exists because an operator can have a reason -- a subject with
+            // thick hair on one site, say -- but taking it is a deliberate act,
+            // and the reduced quality is recorded either way.
+            int n_bad = 0;
+            for (int i = 0; i < kSensorCount; ++i) {
+                if (qual[static_cast<std::size_t>(i)].q == lsl::Quality::Bad) ++n_bad;
+            }
+            const bool electrodes_ok = (n_bad == 0) || st.override_quality;
+
+            // Anchor the primary action to the foot of the card. The fields
+            // above are a short list and the card is now tall, so without this
+            // the button floats in the middle with dead space under it.
+            {
+                // Button, spacer, caption -- plus the ItemSpacing ImGui inserts
+                // between each of them. Leaving that out clipped the caption
+                // out of the bottom of the card.
+                const float step = ImGui::GetStyle().ItemSpacing.y;
+                float need = 56.0f + theme::kS2 + ImGui::GetTextLineHeight() + step * 3.0f;
+                if (n_bad > 0) need += ImGui::GetFrameHeight() * 2.0f + theme::kS1 + step * 2.0f;
+                const float slack = ImGui::GetContentRegionAvail().y - need;
+                if (slack > 0.0f) ImGui::Dummy(ImVec2(1, slack));
+            }
+
+            if (n_bad > 0) {
+                ImGui::TextColored(v4(theme::kBad), "%d of 4 electrodes read Bad", n_bad);
+                ImGui::Checkbox("Start anyway and record reduced quality",
+                                &st.override_quality);
+                ImGui::Dummy(ImVec2(1, theme::kS1));
+            }
+
+            ImGui::BeginDisabled(!electrodes_ok);
             if (ImGui::Button("Start trial", ImVec2(-1.0f, 56.0f))) {
-                st.runner.start(st.preview_schedule(), st.durations);
+                st.io_status.clear();
+                st.started_with_bad_electrodes = (n_bad > 0);
+
+                // Both are opened before the first round so a missing speaker
+                // or an unwritable directory is discovered now, not forty
+                // minutes in with a subject already wearing the headset.
+                std::string err;
+                if (!st.audio.start(err)) st.io_status = "audio: " + err;
+
+                const auto sched = st.preview_schedule();
+                if (!st.recorder.begin_trial("data/datasets", st.subject,
+                                             st.trial_number, st.design, st.durations,
+                                             st.seed, static_cast<int>(sched.size()), err,
+                                             st.started_with_bad_electrodes)) {
+                    st.io_status = "recording: " + err;
+                }
+
+                st.runner.start(sched, st.durations);
+                st.last_round = -1;
+                st.markers.clear();
                 st.survey.clear();
                 st.survey_open = false;
             }
+            ImGui::EndDisabled();
             if (fonts().subhead) ImGui::PopFont();
             ImGui::PopStyleColor(2);
 
             ImGui::Dummy(ImVec2(1, theme::kS2));
-            ImGui::TextColored(v4(theme::kFaint),
-                               "Runs on its own. The survey opens after each round.");
+            if (st.io_status.empty()) {
+                ImGui::TextColored(v4(theme::kFaint),
+                                   "Runs on its own. The survey opens after each round.");
+            } else {
+                ImGui::TextColored(v4(theme::kWarn), "%s", st.io_status.c_str());
+            }
         }
-        end_card();
+        end_card();   // unconditional, like ImGui::EndChild
 
         ImGui::SameLine(0.0f, gap);
         if (begin_card("##proto", ImVec2(right_w, row_h))) {
@@ -521,8 +763,42 @@ void draw_collector(CollectorState& st,
             ImGui::TextColored(v4(theme::kMuted),
                                "plus %d jitter and %d tone controls, shuffled through",
                                st.n_jitter, st.n_tone);
+
+            // The shuffled order this seed produces, before anything is
+            // recorded. The schedule guarantees controls are never first, last,
+            // or adjacent -- that is checkable by eye here, and it is the
+            // property that stops the control condition confounding with
+            // time-in-session. Passing -1 as the current round renders it as a
+            // plan rather than as progress.
+            ImGui::Dummy(ImVec2(1, theme::kS5));
+            ImGui::TextColored(v4(theme::kMuted), "Round order");
+            ImGui::Dummy(ImVec2(1, theme::kS2));
+            {
+                const float w = ImGui::GetContentRegionAvail().x;
+                draw_schedule(sched, -1, ImGui::GetCursorScreenPos(), w);
+                ImGui::Dummy(ImVec2(w, 26.0f));
+            }
+
+            ImGui::Dummy(ImVec2(1, theme::kS3));
+            {
+                ImDrawList* ld = ImGui::GetWindowDrawList();
+                static const Condition kConds[] = {
+                    Condition::Stim, Condition::ControlJitter, Condition::ControlTone};
+                static const char* kNames[] = {"stimulus", "jitter control", "tone control"};
+                for (int i = 0; i < 3; ++i) {
+                    const theme::Rgba cc = condition_color(kConds[i]);
+                    const ImVec2 p = ImGui::GetCursorScreenPos();
+                    ld->AddRectFilled(ImVec2(p.x, p.y + ImGui::GetTextLineHeight() * 0.5f - 1.0f),
+                                      ImVec2(p.x + 14.0f, p.y + ImGui::GetTextLineHeight() * 0.5f + 1.0f),
+                                      ImGui::GetColorU32(v4(cc)), 1.0f);
+                    ImGui::Dummy(ImVec2(18.0f, ImGui::GetTextLineHeight()));
+                    ImGui::SameLine(0.0f, 0.0f);
+                    ImGui::TextColored(v4(theme::kFaint), "%s", kNames[i]);
+                    if (i < 2) ImGui::SameLine(0.0f, theme::kS4);
+                }
+            }
         }
-        end_card();
+        end_card();   // unconditional, like ImGui::EndChild
 
         // ---------------------------------------------------------- advanced
         if (begin_card("##adv", ImVec2(0, st.advanced_open ? 330.0f : 62.0f))) {
@@ -611,7 +887,7 @@ void draw_collector(CollectorState& st,
                 ImGui::Dummy(ImVec2(ew, eh));
             }
         }
-        end_card();
+        end_card();   // unconditional, like ImGui::EndChild
         return;
     }
 
@@ -632,7 +908,7 @@ void draw_collector(CollectorState& st,
                 st.reseed();     // a different order for the next run
             }
         }
-        end_card();
+        end_card();   // unconditional, like ImGui::EndChild
         return;
     }
 
@@ -705,7 +981,7 @@ void draw_collector(CollectorState& st,
         draw_phase_strip(st.runner, st.durations, ImGui::GetCursorScreenPos(),
                          ImGui::GetContentRegionAvail().x, 30.0f);
     }
-    end_card();
+    end_card();   // unconditional, like ImGui::EndChild
 
     ImGui::SameLine(0.0f, gap);
     if (begin_card("##live", ImVec2(side_w, row_h))) {
@@ -737,8 +1013,20 @@ void draw_collector(CollectorState& st,
         const double left_min = (st.runner.trial_total(st.durations) -
                                  st.runner.trial_elapsed()) / 60.0;
         ImGui::TextColored(v4(theme::kMuted), "about %.0f min remaining", left_min);
+
+        ImGui::Dummy(ImVec2(1, theme::kS1));
+        if (!st.io_status.empty()) {
+            ImGui::TextColored(v4(theme::kBad), "%s", st.io_status.c_str());
+        } else if (st.recorder.active()) {
+            ImGui::TextColored(v4(theme::kGood), "recording - %d rounds saved",
+                               st.recorder.rounds_written());
+        } else {
+            ImGui::TextColored(v4(theme::kWarn), "not recording - no device");
+        }
+        ImGui::TextColored(v4(theme::kFaint), "%s",
+                           st.audio.running() ? "audio ready" : "silent - no output device");
     }
-    end_card();
+    end_card();   // unconditional, like ImGui::EndChild
 
     if (begin_card("##runsched", ImVec2(0, 168.0f))) {
         eyebrow("Round schedule");
@@ -766,7 +1054,7 @@ void draw_collector(CollectorState& st,
         if (ImGui::Button("Abort trial", ImVec2(110.0f, 0))) st.runner.abort();
         ImGui::PopStyleColor();
     }
-    end_card();
+    end_card();   // unconditional, like ImGui::EndChild
 
     if (st.survey_open) draw_survey_modal(st);
 }

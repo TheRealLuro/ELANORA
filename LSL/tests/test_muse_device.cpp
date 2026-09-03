@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <cctype>
 #include <chrono>
 #include <string>
 #include <thread>
@@ -118,4 +119,68 @@ TEST_CASE("EEG sampling rate leaves headroom above the 45 Hz gamma ceiling", "[d
     const int sr = BoardShim::get_sampling_rate(
         kMuse2, static_cast<int>(BrainFlowPresets::DEFAULT_PRESET));
     REQUIRE(sr / 2 > 45 * 2);
+}
+
+// ---------------------------------------------------------------------------
+// Transport selection
+// ---------------------------------------------------------------------------
+
+TEST_CASE("each transport maps to its own BrainFlow board", "[device][transport]") {
+    REQUIRE(board_for(Transport::NativeBle) == static_cast<int>(BoardIds::MUSE_2_BOARD));
+    REQUIRE(board_for(Transport::BledDongle) == static_cast<int>(BoardIds::MUSE_2_BLED_BOARD));
+    REQUIRE(board_for(Transport::NativeBle) != board_for(Transport::BledDongle));
+}
+
+TEST_CASE("a dongle connect without a port is refused, not attempted", "[device][transport]") {
+    // Left to BrainFlow this surfaces as an opaque serial failure after the
+    // 15 s discovery timeout. The operator needs to be told which field is
+    // empty, immediately.
+    MuseDevice dev(kMuse2);
+    ConnectRequest req;
+    req.transport = Transport::BledDongle;
+    std::string err;
+    REQUIRE_FALSE(dev.connect(req, err));
+    REQUIRE(err.find("COM") != std::string::npos);
+    REQUIRE_FALSE(dev.connected());
+}
+
+TEST_CASE("a synthetic device ignores the transport", "[device][transport]") {
+    // Guards the branch that keeps tests off real radios: asking a synthetic
+    // board for a dongle must not switch its board id, or CI would try to open
+    // a serial port that does not exist.
+    MuseDevice dev(kSynthetic);
+    ConnectRequest req;
+    req.transport   = Transport::BledDongle;
+    req.serial_port = "COM99";
+    std::string err;
+    REQUIRE(dev.connect(req, err));
+    REQUIRE(dev.board_id() == kSynthetic);
+    REQUIRE(dev.connected());
+    dev.disconnect();
+}
+
+TEST_CASE("serial port enumeration reports plausible names", "[device][transport]") {
+    // The machine under test may have no serial hardware, so an empty list is
+    // a valid answer. What must hold is that anything returned is usable as a
+    // BrainFlow serial_port rather than a registry artefact.
+    for (const std::string& p : list_serial_ports()) {
+        REQUIRE_FALSE(p.empty());
+        REQUIRE(p.find('\0') == std::string::npos);
+        REQUIRE(p.rfind("COM", 0) == 0);
+    }
+}
+
+TEST_CASE("connect failures explain the next action, not an exit code", "[device][transport]") {
+    // BrainFlow reports this as "failed to prepare session3", which tells an
+    // operator nothing. Whatever the wording, the message must name the port
+    // and must not end in a bare exit-code digit.
+    MuseDevice dev(kMuse2);
+    ConnectRequest req;
+    req.transport   = Transport::BledDongle;
+    req.serial_port = "COM251";   // high enough to be absent on any real machine
+    std::string err;
+    REQUIRE_FALSE(dev.connect(req, err));
+    REQUIRE_FALSE(err.empty());
+    REQUIRE(err.find("COM251") != std::string::npos);
+    REQUIRE_FALSE(std::isdigit(static_cast<unsigned char>(err.back())));
 }

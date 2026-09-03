@@ -374,7 +374,7 @@ void electrode_card(const char* id, float width, float height,
                                               : "one degraded",
                       theme::kMuted);
     }
-    end_card();
+    end_card();   // unconditional, like ImGui::EndChild
 }
 
 // One card shape for the entire metric row: a centred stack of eyebrow, ring,
@@ -425,7 +425,7 @@ void metric_card(const char* id, float width, float height,
         text_centered(ImVec2(cx, sub_y + ImGui::GetTextLineHeight() * 0.5f), sub,
                       theme::kMuted);
     }
-    end_card();
+    end_card();   // unconditional, like ImGui::EndChild
 }
 
 }  // namespace
@@ -436,6 +436,8 @@ int main(int argc, char** argv) {
     const char* shot_path = nullptr;
     bool start_collector = false;
     bool autostart = false;
+    Transport transport = Transport::NativeBle;
+    std::string bled_port;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--synthetic") == 0)        synthetic = true;
         else if (std::strcmp(argv[i], "--demo") == 0)        demo = true;
@@ -447,6 +449,17 @@ int main(int argc, char** argv) {
             shot_path = argv[++i];
         else if (std::strcmp(argv[i], "--collector") == 0) start_collector = true;
         else if (std::strcmp(argv[i], "--autostart") == 0) autostart = true;
+        else if (std::strcmp(argv[i], "--bled") == 0) {
+            transport = Transport::BledDongle;
+            // The port is optional so --bled alone picks the only port there
+            // is, which is the common case with one dongle plugged in.
+            if (i + 1 < argc && argv[i + 1][0] != '-') bled_port = argv[++i];
+        }
+    }
+
+    if (transport == Transport::BledDongle && bled_port.empty()) {
+        const std::vector<std::string> ports = list_serial_ports();
+        if (ports.size() == 1) bled_port = ports.front();
     }
 
     if (verbose) BoardShim::enable_dev_board_logger();
@@ -483,9 +496,15 @@ int main(int argc, char** argv) {
     std::string status = "Not connected";
     bool status_error = false;
 
+    std::vector<std::string> serial_ports = list_serial_ports();
+
     auto do_connect = [&] {
+        ConnectRequest req;
+        req.transport     = transport;
+        req.serial_or_mac = device_id.data();
+        req.serial_port   = bled_port;
         std::string err;
-        if (device.connect(device_id.data(), err)) {
+        if (device.connect(req, err)) {
             recorder.clear();
             recorder.start(device);
             start_polling();
@@ -632,9 +651,44 @@ int main(int argc, char** argv) {
         ImGui::SameLine(0.0f, theme::kS4);
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
         if (!device.connected()) {
-            ImGui::SetNextItemWidth(190.0f);
+            // Transport first: it decides whether the field beside it is a
+            // headset name or a COM port, and an operator who picks the wrong
+            // one gets a 15 s discovery timeout before finding out.
+            int tsel = (transport == Transport::BledDongle) ? 1 : 0;
+            static const char* kTransports[] = {"Bluetooth", "USB dongle"};
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 2.0f);
+            if (segmented("##transport", kTransports, 2, &tsel, 172.0f)) {
+                transport = tsel == 1 ? Transport::BledDongle : Transport::NativeBle;
+                if (transport == Transport::BledDongle && bled_port.empty()) {
+                    serial_ports = list_serial_ports();
+                    if (!serial_ports.empty()) bled_port = serial_ports.front();
+                }
+            }
+            ImGui::SameLine(0.0f, theme::kS2);
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
+
+            ImGui::SetNextItemWidth(160.0f);
             ImGui::InputTextWithHint("##id", "serial or MAC",
                                      device_id.data(), device_id.size());
+
+            if (transport == Transport::BledDongle) {
+                ImGui::SameLine(0.0f, theme::kS2);
+                ImGui::SetNextItemWidth(112.0f);
+                const char* preview = bled_port.empty() ? "port" : bled_port.c_str();
+                if (ImGui::BeginCombo("##port", preview)) {
+                    // Re-enumerated on open, not once at startup: a dongle
+                    // plugged in after launch must appear without a restart.
+                    serial_ports = list_serial_ports();
+                    if (serial_ports.empty()) {
+                        ImGui::TextUnformatted("no serial ports");
+                    }
+                    for (const std::string& p : serial_ports) {
+                        if (ImGui::Selectable(p.c_str(), p == bled_port)) bled_port = p;
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+
             ImGui::SameLine(0.0f, theme::kS2);
             if (ImGui::Button("Connect")) do_connect();
         } else if (ImGui::Button("Disconnect")) {
@@ -670,7 +724,9 @@ int main(int argc, char** argv) {
         if (tab == 1) {
             // The collector needs live electrode state so a headset problem is
             // caught in the round it happens, not at analysis.
-            collector::draw_collector(collector_state, qual, dt);
+            collector::draw_collector(collector_state, qual,
+                                      device.connected() ? &recorder : nullptr,
+                                      device.connected() ? &ch : nullptr, dt);
             ImGui::End();
             ImGui::PopStyleVar(2);
             shell.end_frame();
@@ -728,9 +784,12 @@ int main(int argc, char** argv) {
         std::snprintf(buf, sizeof(buf), "%.1f Hz", peak_hz);
         std::snprintf(sub, sizeof(sub), "on %s",
                       electrode_name(static_cast<SensorId>(focus_sensor)));
+        // No ring caption. The ring is a gauge of where the peak sits in the
+        // 1-45 Hz analysis span and the headline below already carries the
+        // number; a bare "Hz" in the middle labelled nothing.
         metric_card("##m4", card_w, card_h, "Spectral peak",
                     focus.valid ? buf : "--", theme::kAccent, sub,
-                    std::clamp(peak_hz / kAnalysisHighHz, 0.0, 1.0), "Hz", focus.valid);
+                    std::clamp(peak_hz / kAnalysisHighHz, 0.0, 1.0), nullptr, focus.valid);
 
         ImGui::Dummy(ImVec2(1.0f, theme::kS1));
 
@@ -889,7 +948,7 @@ int main(int argc, char** argv) {
                 ImGui::SetCursorScreenPos(ImVec2(ro.x, ro.y + row_h));
             }
         }
-        end_card();
+        end_card();   // unconditional, like ImGui::EndChild
 
         ImGui::End();
         ImGui::PopStyleVar(2);

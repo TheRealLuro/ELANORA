@@ -9,17 +9,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # copied once rather than into five scattered per-target directories.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-if(MSVC)
-  # Global, third-party code included. /W4 therefore also applies to the
-  # fetched dependencies, so a full build emits thousands of warnings from
-  # code we do not control. Filter rather than fight it:
-  #   cmake --build build 2>&1 | grep "warning C" | grep -v _deps
-  add_compile_options(/W4 /permissive- /utf-8 /Zc:preprocessor)
-  add_compile_definitions(_USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN)
-else()
-  add_compile_options(-Wall -Wextra -Wpedantic)
-endif()
-
 # Kept as a no-op shim so the add_* helpers below need no edit if per-target
 # warning control is introduced later.
 function(elanora_set_warnings NAME)
@@ -28,6 +17,29 @@ endfunction()
 enable_testing()
 include(CTest)
 include(cmake/Dependencies.cmake)
+
+# Our warning and conformance flags are set AFTER the dependencies are pulled
+# in, on purpose. A directory-scope add_compile_options is inherited by every
+# add_subdirectory issued after it, and FetchContent_MakeAvailable issues one
+# per dependency from inside Dependencies.cmake. Setting these first therefore
+# compiled the vendored sources with our flags, and two of them are not merely
+# noisy there -- they break the build outright:
+#
+#   /permissive-       makes C4596 (illegal qualified name in a member
+#                      declaration) fire in SimpleBLE's PeripheralBase.h
+#   /Zc:preprocessor   enables C5102 (invalid command-line macro definition),
+#                      which SimpleBLE trips by passing "/D_WIN32_WINNT=..."
+#                      through target_compile_definitions
+#
+# SimpleBLE compiles with /WX, so both became hard errors and no
+# simpleble-c.dll was produced -- which is what a Muse 2 needs to connect over
+# BLE. Vendored code compiles with its own flags; ours apply from here down.
+if(MSVC)
+  add_compile_options(/W4 /permissive- /utf-8 /Zc:preprocessor)
+  add_compile_definitions(_USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN)
+else()
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
 
 # The BrainFlow C++ binding target name. Isolated in one variable because it is
 # the single most likely thing to need adjusting on first configure -- if the
@@ -73,6 +85,14 @@ endfunction()
 # which gives no hint about what is missing.
 function(elanora_copy_runtime_dlls NAME)
   if(WIN32 AND ELANORA_WITH_BRAINFLOW AND ELANORA_BRAINFLOW_DLL_DIR)
+    # simpleble-c is not linked by anything -- BrainFlow loads it with
+    # LoadLibrary the first time a BLE board is opened. Nothing therefore pulls
+    # it into the build, and the copy below would silently ship without it,
+    # leaving the Muse 2 to fail at connect time with
+    #   "failed to load lib simpleble-c.dll".
+    if(TARGET simpleble-c)
+      add_dependencies(${NAME} simpleble-c)
+    endif()
     add_custom_command(TARGET ${NAME} POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_directory
               "${ELANORA_BRAINFLOW_DLL_DIR}" "$<TARGET_FILE_DIR:${NAME}>"

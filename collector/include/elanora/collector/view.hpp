@@ -9,8 +9,11 @@
 #include <array>
 #include <cstdint>
 
+#include "elanora/collector/audio_engine.hpp"
+#include "elanora/collector/recorder.hpp"
 #include "elanora/collector/session.hpp"
 #include "elanora/lsl/signal_quality.hpp"
+#include "elanora/lsl/stream_recorder.hpp"
 
 namespace elanora::collector {
 
@@ -32,17 +35,36 @@ struct CollectorState {
     // common case is: type a name, press start.
     bool advanced_open = false;
 
-    double  freq_lo = 0.5;
-    double  freq_hi = 45.0;
-    int     freq_count = 16;
-    int     n_jitter = 2;
-    int     n_tone = 2;
+    // Editable, but seeded from the protocol constants rather than repeating
+    // the literals here -- the spacing is an experimental constraint, and a
+    // second copy of it is a second place for it to drift.
+    double  freq_lo    = kProtocolFreqLo;
+    double  freq_hi    = kProtocolFreqHi;
+    int     freq_count = kProtocolFreqCount;
+    int     n_jitter   = kProtocolJitter;
+    int     n_tone     = kProtocolTone;
 
     // Compresses the clock so a 40-minute trial can be walked through in a
     // couple of minutes while checking the flow. Never used for real data.
     double  speed = 1.0;
 
     bool    survey_open = false;
+
+    // Set when the operator chose to start with an electrode reading Bad. The
+    // trial still runs; the fact is recorded so the analysis can see it.
+    bool override_quality = false;
+    bool started_with_bad_electrodes = false;
+
+    AudioEngine   audio;
+    TrialRecorder recorder;
+    std::string   io_status;      // shown in the UI; empty when all is well
+
+    // Markers for the round in flight, stamped from the board clock so a phase
+    // can be sliced out of the raw file without trusting a wall clock.
+    std::vector<Marker> markers;
+    Phase last_phase = Phase::Baseline;
+    int   last_round = -1;
+    double round_start_ts = 0.0;
 
     CollectorState();
 
@@ -56,8 +78,12 @@ struct CollectorState {
 // Draws the whole tab and advances the trial clock. `qual` is the live
 // electrode state, shown during a run so a headset problem is caught in the
 // round it happens rather than at analysis.
+// `stream` and `channels` supply the raw samples written to disk; pass nullptr
+// when no device is connected and the trial runs as a silent rehearsal.
 void draw_collector(CollectorState& st,
                     const std::array<lsl::ChannelQuality, kSensorCount>& qual,
+                    lsl::StreamRecorder* stream,
+                    const lsl::ChannelMap* channels,
                     float dt);
 
 }  // namespace elanora::collector

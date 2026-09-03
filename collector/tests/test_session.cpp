@@ -258,3 +258,33 @@ TEST_CASE("artifact checkboxes are optional", "[survey]") {
     s.jaw = true;
     REQUIRE(s.complete());
 }
+
+TEST_CASE("14 points from 0.5 to 45 Hz are half-octave steps", "[session][protocol]") {
+    // A Global Constraint, pinned here because the count is a plain int in a
+    // settings struct and therefore easy to nudge: 14 points across this range
+    // give a ratio of sqrt(2), which is what "half-octave" means. Changing the
+    // count silently changes the spacing, the round count, and the data budget.
+    REQUIRE(kProtocolFreqCount == 14);
+    REQUIRE(kProtocolRounds == 18);
+
+    const auto f = geometric_set(kProtocolFreqLo, kProtocolFreqHi, kProtocolFreqCount);
+    REQUIRE(f.size() == 14);
+    REQUIRE(f.front() == Catch::Approx(kProtocolFreqLo));
+    REQUIRE(f.back() == Catch::Approx(kProtocolFreqHi));
+    // Asserted against the unrounded law rather than on consecutive ratios.
+    // Values are rounded to 0.1 Hz for display, and at the bottom of the range
+    // that rounding is worth ~1% of the step (0.707 shows as 0.7), which would
+    // make a tight ratio test fail on the presentation rather than the spacing.
+    const double ratio = std::pow(kProtocolFreqHi / kProtocolFreqLo,
+                                  1.0 / (kProtocolFreqCount - 1));
+    REQUIRE(ratio == Catch::Approx(std::sqrt(2.0)).epsilon(0.01));
+    for (std::size_t i = 0; i < f.size(); ++i) {
+        const double ideal = kProtocolFreqLo * std::pow(ratio, static_cast<double>(i));
+        REQUIRE(f[i] == Catch::Approx(ideal).margin(0.05));
+    }
+
+    // 14 stimulus rounds plus 2 jitter and 2 tone controls is the 18-round,
+    // 36-minute session the data budget is sized for.
+    REQUIRE(build_schedule(f, kProtocolJitter, kProtocolTone, 84120).size()
+            == static_cast<std::size_t>(kProtocolRounds));
+}

@@ -134,6 +134,16 @@ endif()
 # ---------------------------------------------------------------------------
 if(ELANORA_WITH_BRAINFLOW)
   set(BRAINFLOW_VERSION "5.16.0" CACHE STRING "BrainFlow git tag to build against")
+
+  # REQUIRED for the Muse 2. BrainFlow defaults BUILD_BLE to OFF, which silently
+  # produces a BoardController that cannot open any Bluetooth Low Energy board:
+  # the DLL loads, prepare_session() is reached, and only then does it fail with
+  # "failed to load lib simpleble-c.dll" -- a message that reads like a missing
+  # runtime rather than a build option that was never turned on.
+  #
+  # MUSE_2_BOARD talks native BLE with no dongle, so without this the headset
+  # can never connect, however healthy the electrodes are.
+  set(BUILD_BLE ON CACHE BOOL "" FORCE)
   FetchContent_Declare(brainflow
     GIT_REPOSITORY https://github.com/brainflow-dev/brainflow.git
     GIT_TAG        ${BRAINFLOW_VERSION}

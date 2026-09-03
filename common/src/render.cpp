@@ -708,4 +708,136 @@ void text_mono(theme::Rgba c, const char* fmt, ...) {
     va_end(args);
 }
 
+// ---------------------------------------------------------------------------
+// Signed bars and curves
+// ---------------------------------------------------------------------------
+
+void diverging_bar(ImVec2 pos, ImVec2 size, double value, double full_scale,
+                   double uncertainty, theme::Rgba color) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    const float cx = pos.x + size.x * 0.5f;
+    const float half = size.x * 0.5f;
+    const float mid = pos.y + size.y * 0.5f;
+
+    // The zero rule, drawn first so the bar sits on top of it.
+    dl->AddLine(ImVec2(cx, pos.y), ImVec2(cx, pos.y + size.y), u32(theme::kLineHi, 0.8f), 1.0f);
+
+    if (full_scale <= 0.0) return;
+
+    const double norm = std::clamp(value / full_scale, -1.0, 1.0);
+    const float w = static_cast<float>(norm) * half;
+
+    // An interval straddling zero means the sign itself is unresolved. Darken
+    // rather than fade: a lowered alpha would show the card through the bar and
+    // read as a rendering fault instead of as low confidence.
+    const bool sign_known = std::abs(value) > uncertainty;
+    const theme::Rgba fill = sign_known
+                                 ? color
+                                 : theme::Rgba{color.r * 0.38f, color.g * 0.38f,
+                                               color.b * 0.38f, 1.0f};
+
+    if (std::abs(w) >= 1.0f) {
+        const float x0 = (w < 0.0f) ? cx + w : cx;
+        const float x1 = (w < 0.0f) ? cx : cx + w;
+        // Rounded on the outer end only would need per-corner flags; a small
+        // uniform radius reads clean and avoids the patched-on-circle look.
+        dl->AddRectFilled(ImVec2(x0, pos.y + 2.0f), ImVec2(x1, pos.y + size.y - 2.0f),
+                          u32(fill), 2.0f);
+    }
+
+    // The whisker, laid over the bar in near-white so it stays legible on top
+    // of any band colour.
+    if (uncertainty > 0.0) {
+        const double lo = std::clamp((value - uncertainty) / full_scale, -1.0, 1.0);
+        const double hi = std::clamp((value + uncertainty) / full_scale, -1.0, 1.0);
+        const float xl = cx + static_cast<float>(lo) * half;
+        const float xr = cx + static_cast<float>(hi) * half;
+        const ImU32 wc = u32(theme::kTrace, 0.55f);
+        dl->AddLine(ImVec2(xl, mid), ImVec2(xr, mid), wc, 1.0f);
+        dl->AddLine(ImVec2(xl, mid - 3.0f), ImVec2(xl, mid + 3.0f), wc, 1.0f);
+        dl->AddLine(ImVec2(xr, mid - 3.0f), ImVec2(xr, mid + 3.0f), wc, 1.0f);
+    }
+}
+
+double score_curve(ImVec2 origin, ImVec2 size,
+                   const std::vector<double>& xs, const std::vector<double>& ys,
+                   double shade_lo, double shade_hi, double mark_x,
+                   theme::Rgba color) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (xs.size() < 2 || ys.size() != xs.size()) return 0.0;
+
+    double x_lo = xs.front(), x_hi = xs.front();
+    double y_lo = ys.front(), y_hi = ys.front();
+    for (std::size_t i = 0; i < xs.size(); ++i) {
+        x_lo = std::min(x_lo, xs[i]); x_hi = std::max(x_hi, xs[i]);
+        y_lo = std::min(y_lo, ys[i]); y_hi = std::max(y_hi, ys[i]);
+    }
+    if (x_hi <= x_lo) return 0.0;
+    // A flat curve would collapse to a division by zero; give it a nominal
+    // span so it renders as the flat line it is rather than vanishing.
+    if (y_hi - y_lo < 1e-9) { y_hi = y_lo + 1.0; y_lo -= 1.0; }
+
+    auto sx = [&](double v) {
+        return origin.x + static_cast<float>((v - x_lo) / (x_hi - x_lo)) * size.x;
+    };
+    auto sy = [&](double v) {
+        return origin.y + size.y -
+               static_cast<float>((v - y_lo) / (y_hi - y_lo)) * size.y;
+    };
+
+    dl->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y),
+                      u32(theme::kPanelHi), 4.0f);
+
+    // The trained range, shaded. Everything outside it is extrapolation, and
+    // saying so with a band is clearer than a sentence under the chart.
+    if (shade_hi > shade_lo) {
+        dl->AddRectFilled(ImVec2(sx(shade_lo), origin.y),
+                          ImVec2(sx(shade_hi), origin.y + size.y),
+                          u32(theme::kRaised, 0.55f), 0.0f);
+    }
+
+    // A zero rule, when zero is inside the range.
+    if (y_lo < 0.0 && y_hi > 0.0) {
+        const float zy = sy(0.0);
+        dl->AddLine(ImVec2(origin.x, zy), ImVec2(origin.x + size.x, zy),
+                    u32(theme::kLine), 1.0f);
+    }
+
+    // Area fill under the curve, then the curve itself. The fill is built as a
+    // strip of quads rather than a filled polygon: a score curve is not convex,
+    // and AddConvexPolyFilled fans spurious triangles across a non-convex path.
+    for (std::size_t i = 1; i < xs.size(); ++i) {
+        const float ax = sx(xs[i - 1]), bx = sx(xs[i]);
+        const float ay = sy(ys[i - 1]), by = sy(ys[i]);
+        const float base = origin.y + size.y;
+        dl->AddQuadFilled(ImVec2(ax, ay), ImVec2(bx, by), ImVec2(bx, base),
+                          ImVec2(ax, base), u32(color, 0.14f));
+    }
+    for (std::size_t i = 1; i < xs.size(); ++i) {
+        dl->AddLine(ImVec2(sx(xs[i - 1]), sy(ys[i - 1])), ImVec2(sx(xs[i]), sy(ys[i])),
+                    u32(color), 1.8f);
+    }
+
+    // The winner.
+    double mark_y = ys.front();
+    if (mark_x >= x_lo && mark_x <= x_hi) {
+        std::size_t best = 0;
+        for (std::size_t i = 1; i < xs.size(); ++i) {
+            if (std::abs(xs[i] - mark_x) < std::abs(xs[best] - mark_x)) best = i;
+        }
+        mark_y = ys[best];
+        const float mx = sx(xs[best]), my = sy(mark_y);
+        dl->AddLine(ImVec2(mx, origin.y), ImVec2(mx, origin.y + size.y),
+                    u32(theme::kAccent, 0.5f), 1.0f);
+        soft_glow(ImVec2(mx, my), 14.0f, color, 0.5f);
+        dl->AddCircleFilled(ImVec2(mx, my), 4.5f, u32(theme::kGround));
+        dl->AddCircleFilled(ImVec2(mx, my), 3.0f, u32(color));
+    }
+
+    dl->AddRect(origin, ImVec2(origin.x + size.x, origin.y + size.y),
+                u32(theme::kLine), 4.0f);
+    return mark_y;
+}
+
 }  // namespace elanora

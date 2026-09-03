@@ -173,6 +173,32 @@ void ring_gauge(ImVec2 center, float radius, float thickness, double value,
 void value_bar(ImVec2 pos, ImVec2 size, double value, theme::Rgba color,
                bool emphasised);
 
+// A bar that grows left or right from a centre line, with an uncertainty
+// whisker laid over it.
+//
+// This is the right encoding for a signed change and a bare number is the
+// wrong one: direction becomes position, magnitude becomes length, and the two
+// read together at a glance instead of requiring the eye to parse a sign.
+//
+// `uncertainty` draws a whisker in the same units as `value`. When the whisker
+// crosses zero the model cannot tell which direction the change went, and the
+// bar is drawn darkened to say so -- de-emphasis is done by darkening the
+// colour, never by lowering alpha, which would make the bar look see-through
+// over the card behind it.
+void diverging_bar(ImVec2 pos, ImVec2 size, double value, double full_scale,
+                   double uncertainty, theme::Rgba color);
+
+// An XY curve with an optional shaded x-band and a marked x position.
+//
+// `shade_lo`/`shade_hi` shade a region of the x axis (the trained frequency
+// range); pass equal values for no shading. `mark_x` drops a vertical rule at
+// the chosen point. Returns the y value at `mark_x` for callers that want to
+// label it.
+double score_curve(ImVec2 origin, ImVec2 size,
+                   const std::vector<double>& xs, const std::vector<double>& ys,
+                   double shade_lo, double shade_hi, double mark_x,
+                   theme::Rgba color);
+
 // Draws text centred on a point, in the current font. Centring by hand at
 // every call site is where alignment drifts.
 void text_centered(ImVec2 center, const char* text, theme::Rgba color);
@@ -197,6 +223,14 @@ void status_glyph(ImVec2 center, float radius, int level, theme::Rgba color);
 // ---------------------------------------------------------------------------
 
 // Begin a card. Always pair with end_card(), including when this returns false.
+// Returns true when the card's contents are visible; draw them only in that
+// case. end_card() must be called REGARDLESS of the return value, exactly like
+// ImGui::EndChild -- begin_card pushes style state and opens a child window,
+// and a culled card that skipped end_card would leave both stacks unbalanced
+// and trip an assertion several frames later, far from the cause.
+//
+//     if (begin_card("id", size)) { ...contents... }
+//     end_card();
 bool begin_card(const char* id, ImVec2 size = ImVec2(0, 0));
 void end_card();
 

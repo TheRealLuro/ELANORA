@@ -68,6 +68,22 @@ struct PlannedRound {
     }
 };
 
+// The protocol every subject runs. Kept here rather than as defaults on the UI
+// struct because these are experimental constants, not view preferences, and
+// the analysis layer's data budget is sized for exactly these numbers.
+//
+// 14 points from 0.5 to 45 Hz give a ratio of 90^(1/13) = 1.414 -- half-octave
+// steps. The count and the spacing are the same fact stated two ways, so a
+// count of 16 would silently make the steps 1.35 and no longer half octaves,
+// and would stretch the session from 18 rounds to 20.
+inline constexpr double kProtocolFreqLo    = 0.5;
+inline constexpr double kProtocolFreqHi    = 45.0;
+inline constexpr int    kProtocolFreqCount = 14;
+inline constexpr int    kProtocolJitter    = 2;
+inline constexpr int    kProtocolTone      = 2;
+inline constexpr int    kProtocolRounds =
+    kProtocolFreqCount + kProtocolJitter + kProtocolTone;   // 18
+
 // Geometric frequency set: `count` values from lo to hi with a constant ratio.
 // Geometric rather than linear because 1->2 Hz doubles the rate while 40->41
 // barely changes it, so equal Hz steps oversample the top of the range and
@@ -149,13 +165,30 @@ private:
 // ---------------------------------------------------------------------------
 
 struct Survey {
-    int  relaxation = 0;      // 1..7, 0 = unanswered
-    int  alertness  = 0;      // 1..7
-    int  rhythm     = -1;     // 0 clear, 1 faint, 2 none, -1 unanswered
+    int  relaxation   = 0;    // 1..7, 0 = unanswered
+    int  alertness    = 0;    // 1..7
+    int  pleasantness = 0;    // 1..7
+    int  discomfort   = 0;    // 0..3
+
+    // The manipulation check. If subjects report a steady rhythm on jittered
+    // control trials as often as on stimulus trials, the jitter is not doing
+    // its job and the control is worthless -- which is something only the
+    // subject can tell us.
+    int  rhythm = -1;         // 0 clear, 1 faint, 2 none, -1 unanswered
+
+    // Perceived breathing change, and an optional self-count to compare
+    // against the IMU estimate. The IMU is an indirect measure; a subject's
+    // own count is the only independent check available on this hardware.
+    int  breathing_perceived = -1;   // 0 slower, 1 same, 2 faster, -1 unanswered
+    int  breaths_self_count  = -1;   // -1 = not counted
+
     bool jaw = false, moved = false, eyes_open = false, swallowed = false, noise = false;
 
-    // The first three are required. Blank rows must not reach the dataset, so
-    // the submit control stays disabled until they are answered.
+    std::string note;
+
+    // Relaxation, alertness and the rhythm check are required. Blank rows must
+    // not reach the dataset, so the submit control stays disabled until they
+    // are answered; everything else is genuinely optional.
     bool complete() const { return relaxation > 0 && alertness > 0 && rhythm >= 0; }
     void clear() { *this = Survey{}; }
 };

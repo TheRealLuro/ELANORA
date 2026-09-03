@@ -46,6 +46,45 @@ struct ChannelMap {
     bool has_imu() const { return !accel.empty() || !gyro.empty(); }
 };
 
+// How the headset is reached.
+//
+// The Muse 2 has no USB data interface -- the micro-USB socket charges the
+// headset and nothing more, so EEG can never arrive over the charging cable.
+// "Connecting over USB" therefore means one of exactly two things, and only
+// the second needs different code:
+//
+//   NativeBle    The PC's own Bluetooth radio, driven through SimpleBLE.
+//                A plain USB Bluetooth adapter shows up here -- Windows owns
+//                it, BrainFlow just sees a working BLE stack. No board change.
+//
+//   BledDongle   A Silicon Labs BLED112 USB dongle, which is a BLE radio that
+//                presents itself as a serial port. BrainFlow talks to it
+//                directly over that COM port, bypassing the Windows Bluetooth
+//                stack entirely, so it works on a machine with no Bluetooth
+//                hardware at all. This is a different board id.
+enum class Transport {
+    NativeBle,
+    BledDongle,
+};
+
+const char* transport_name(Transport t);
+
+// The BrainFlow board id backing a transport.
+int board_for(Transport t);
+
+// Serial ports the OS currently reports, e.g. {"COM1", "COM4"}. Used to offer
+// a choice rather than making the operator guess which port the dongle took.
+// Returns an empty vector on platforms where enumeration is unavailable.
+std::vector<std::string> list_serial_ports();
+
+struct ConnectRequest {
+    Transport   transport = Transport::NativeBle;
+    // Optional. Empty means "the first Muse BrainFlow finds".
+    std::string serial_or_mac;
+    // Required for BledDongle, ignored otherwise. e.g. "COM4".
+    std::string serial_port;
+};
+
 class MuseDevice {
 public:
     explicit MuseDevice(int board_id = static_cast<int>(BoardIds::MUSE_2_BOARD));
@@ -58,6 +97,14 @@ public:
     // channel map. `serial_or_mac` may be empty to let BrainFlow discover the
     // first matching device. Returns false and fills `err` on any failure.
     bool connect(const std::string& serial_or_mac, std::string& err);
+
+    // As above, but selects the transport too.
+    //
+    // The board id switches to match `req.transport`, but only when this
+    // device was constructed as a Muse in the first place. A MuseDevice built
+    // on SYNTHETIC_BOARD stays synthetic whatever transport is asked for --
+    // otherwise every test would start hunting for real Bluetooth hardware.
+    bool connect(const ConnectRequest& req, std::string& err);
 
     // Safe to call when not connected, and safe to call twice.
     void disconnect();
