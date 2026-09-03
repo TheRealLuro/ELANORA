@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>ELANORA</title>
+<link rel="stylesheet" href="style.css">
+
+<header>
+  <h1>ELANORA</h1>
+  <span id="status">not connected</span>
+</header>
+
+<div class="card">
+  <button id="connect">Connect headset</button>
+  <div id="err" class="err"></div>
+  <div class="hint" id="hint">
+    Switch the Muse on and close the Muse app first — the headset accepts one
+    connection at a time.
+  </div>
+</div>
+
+<div class="card">
+  <div class="eyebrow">Electrodes</div>
+  <table><tbody id="electrodes">
+    <tr><td class="name">TP9</td><td class="q">—</td><td class="num"></td><td class="num"></td></tr>
+    <tr><td class="name">AF7</td><td class="q">—</td><td class="num"></td><td class="num"></td></tr>
+    <tr><td class="name">AF8</td><td class="q">—</td><td class="num"></td><td class="num"></td></tr>
+    <tr><td class="name">TP10</td><td class="q">—</td><td class="num"></td><td class="num"></td></tr>
+  </tbody></table>
+  <div class="hint" id="drops"></div>
+</div>
+
+<div class="card">
+  <div class="eyebrow">Check before collecting</div>
+  <div class="hint">
+    All four should read <b class="good">good</b> at 3–50 µV once the headset
+    settles. Then close your eyes for ten seconds: alpha should rise on AF7 and
+    AF8. If it does not, the seating is wrong and no amount of analysis will
+    recover it.
+  </div>
+</div>
+
+<script type="module" src="./app.js"></script>

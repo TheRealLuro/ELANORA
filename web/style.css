@@ -1,0 +1,83 @@
+/* Phone-first. Everything is sized for a thumb and for reading at arm's length
+   with a headset on, which is the actual posture this is used in. */
+
+:root {
+  --ground: #0b0d10;
+  --panel: #12161c;
+  --line: #1c2128;
+  --text: #e6e9ee;
+  --muted: #8b93a1;
+  --faint: #5b6472;
+  --accent: #3b82f6;
+  --good: #39d98a;
+  --warn: #f2b544;
+  --bad: #ff6b6b;
+  --radius: 12px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 20px 16px calc(32px + env(safe-area-inset-bottom));
+  background: var(--ground);
+  color: var(--text);
+  font: 16px/1.5 -apple-system, system-ui, "Segoe UI", sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+header h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: .02em; }
+#status { font-size: 13px; color: var(--muted); }
+#status.live { color: var(--good); }
+#status.err { color: var(--bad); }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 14px;
+}
+.eyebrow {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--faint); margin-bottom: 12px;
+}
+
+button {
+  font: 600 17px/1 -apple-system, system-ui, sans-serif;
+  padding: 16px 20px;
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  /* 44 px is the smallest reliable touch target, and this one is pressed with
+     a headset already on. */
+  min-height: 52px;
+}
+button:disabled { background: #263041; color: var(--faint); }
+button.secondary { background: #1c2431; color: var(--text); }
+
+table { width: 100%; border-collapse: collapse; }
+td { padding: 10px 0; border-top: 1px solid var(--line); }
+tr:first-child td { border-top: 0; }
+td.name { font-weight: 600; width: 68px; }
+td.q { width: 74px; }
+td.num { text-align: right; font-family: ui-monospace, Menlo, monospace;
+         font-size: 14px; color: var(--muted); }
+.good { color: var(--good); } .fair { color: var(--warn); } .bad { color: var(--bad); }
+
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+       margin-right: 7px; vertical-align: middle; }
+.dot.good { background: var(--good); }
+.dot.fair { background: var(--warn); }
+.dot.bad  { background: var(--bad); }
+
+.hint { font-size: 13px; color: var(--faint); margin-top: 10px; }
+.err { color: var(--bad); font-size: 14px; margin-top: 10px; }

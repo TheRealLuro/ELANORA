@@ -1,0 +1,268 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ELANORA JS tests</title>
+<style>
+  body { font: 14px/1.6 ui-monospace, Menlo, monospace;
+         background: #0b0d10; color: #e6e9ee; padding: 20px; margin: 0; }
+  h2 { font-size: 18px; }
+  .p { color: #39d98a; } .f { color: #ff6b6b; }
+  .grp { color: #8b93a1; margin-top: 14px; border-bottom: 1px solid #1c2128; }
+  .d { color: #8b93a1; }
+</style>
+<div id="out">running…</div>
+<script type="module">
+import { decodeEeg, decodePpg, decodeImu, unwrap, ACCEL_SCALE } from "./decode.js";
+import { Stream } from "./ringbuffer.js";
+import { assess, bandPowers, peakHz } from "./dsp.js";
+import { toCsv, envelope } from "./upload.js";
+import { Round } from "./protocol.js";
+import { renderStimulus } from "./tone.js";
+
+const results = [];
+let group = "";
+const g = (name) => { group = name; };
+const check = (name, cond, detail = "") =>
+  results.push({ group, name, ok: !!cond, detail });
+const near = (a, b, tol) => Math.abs(a - b) <= tol;
+
+// ---------------------------------------------------------------- decode
+g("decode");
+{
+  const buf = new Uint8Array(20);
+  buf[0] = 0x00; buf[1] = 0x2a;                 // sequence 42
+  buf[2] = 0x80; buf[3] = 0x09; buf[4] = 0x00;  // 0x800, 0x900
+  const eeg = decodeEeg(new DataView(buf.buffer));
+  check("sequence is big-endian", eeg.seq === 42, `got ${eeg.seq}`);
+  check("packet yields 12 samples", eeg.samples.length === 12, `got ${eeg.samples.length}`);
+  check("0x800 is zero uV", near(eeg.samples[0], 0, 1e-9), `got ${eeg.samples[0]}`);
+  check("0x900 is +125 uV", near(eeg.samples[1], 256 * 125 / 256, 1e-6),
+        `got ${eeg.samples[1]}`);
+
+  const p = new Uint8Array(20);
+  p[0] = 0x00; p[1] = 0x07;
+  p[2] = 0x01; p[3] = 0x00; p[4] = 0x00;        // 65536
+  const pp = decodePpg(new DataView(p.buffer));
+  check("ppg sequence", pp.seq === 7, `got ${pp.seq}`);
+  check("ppg yields 6 samples", pp.samples.length === 6, `got ${pp.samples.length}`);
+  check("ppg is 24-bit big-endian", pp.samples[0] === 65536, `got ${pp.samples[0]}`);
+
+  const m = new Uint8Array(20);
+  m[0] = 0x00; m[1] = 0x03;
+  m[2] = 0x40; m[3] = 0x00;                      // +16384 -> +1.0 g
+  const mm = decodeImu(new DataView(m.buffer), ACCEL_SCALE);
+  check("imu sequence", mm.seq === 3, `got ${mm.seq}`);
+  check("imu yields 3 triplets", mm.samples.length === 3, `got ${mm.samples.length}`);
+  check("imu scales to 1 g", near(mm.samples[0][0], 1.0, 1e-6), `got ${mm.samples[0][0]}`);
+
+  const neg = new Uint8Array(20);
+  neg[2] = 0xc0; neg[3] = 0x00;                  // -16384 -> -1.0 g
+  check("imu is signed",
+        near(decodeImu(new DataView(neg.buffer), ACCEL_SCALE).samples[0][0], -1.0, 1e-6));
+
+  check("unwrap passes a normal step", unwrap(100, 101) === 101);
+  check("unwrap crosses 65535", unwrap(65535, 0) === 65536, `got ${unwrap(65535, 0)}`);
+  check("unwrap survives a second wrap",
+        unwrap(131071, 0) === 131072, `got ${unwrap(131071, 0)}`);
+}
+
+// ------------------------------------------------------------ ringbuffer
+g("ringbuffer");
+{
+  const s = new Stream(256, 12);
+  s.anchor(0);
+  s.push(0, Array(12).fill(1));
+  s.push(1, Array(12).fill(2));
+  check("two packets give 24 samples", s.slice(0, 1).v.length === 24,
+        `got ${s.slice(0, 1).v.length}`);
+  check("no drops yet", s.dropped === 0, `got ${s.dropped}`);
+  const t = s.slice(0, 1).t;
+  check("timestamps advance by 1/256", near(t[1] - t[0], 1 / 256, 1e-12));
+
+  // Packet 2 is lost; packet 3 arrives. The hole must survive as NaN.
+  s.push(3, Array(12).fill(4));
+  const out = s.slice(0, 1);
+  check("a dropped packet is counted", s.dropped === 12, `got ${s.dropped}`);
+  check("a dropped packet becomes NaN", out.v.slice(24, 36).every(Number.isNaN));
+  check("the gap is never bridged", !out.v.slice(24, 36).some((x) => x === 4));
+  check("data after the gap is preserved",
+        out.v.slice(36, 48).every((x) => x === 4));
+
+  const dup = new Stream(256, 12);
+  dup.anchor(0);
+  dup.push(5, Array(12).fill(1));
+  dup.push(5, Array(12).fill(9));
+  check("a duplicate packet is ignored", dup.length === 12, `got ${dup.length}`);
+}
+
+// ------------------------------------------------------------------- dsp
+g("dsp");
+{
+  const sine = (hz, sr, secs, amp = 10) =>
+    Array.from({ length: sr * secs }, (_, i) => amp * Math.sin(2 * Math.PI * hz * i / sr));
+
+  const bp = bandPowers(sine(10, 256, 4), 256);
+  check("10 Hz is alpha dominant", bp.rel[2] > 0.5, `alpha ${bp.rel[2].toFixed(3)}`);
+  check("relative powers sum to one",
+        near(bp.rel.reduce((a, b) => a + b, 0), 1.0, 0.02),
+        `sum ${bp.rel.reduce((a, b) => a + b, 0).toFixed(4)}`);
+  check("6 Hz lands in theta", bandPowers(sine(6, 256, 4), 256).rel[1] > 0.5,
+        `theta ${bandPowers(sine(6, 256, 4), 256).rel[1].toFixed(3)}`);
+
+  // The test that shows why both representations are stored.
+  const a = bandPowers(sine(10, 256, 4, 1), 256);
+  const b = bandPowers(sine(10, 256, 4, 2), 256);
+  check("doubling amplitude raises absolute power", b.abs[2] > a.abs[2] * 3,
+        `${a.abs[2].toExponential(2)} -> ${b.abs[2].toExponential(2)}`);
+  check("doubling amplitude leaves relative power alone",
+        near(b.rel[2], a.rel[2], 0.02));
+
+  check("flat signal is flat and bad",
+        assess(Array(512).fill(0), 256).flat &&
+        assess(Array(512).fill(0), 256).quality === "bad");
+  check("railed signal is railed", assess(Array(512).fill(400), 256).railed);
+  check("10 uV sine is good", assess(sine(10, 256, 2), 256).quality === "good",
+        `got ${assess(sine(10, 256, 2), 256).quality}`);
+
+  // NaN excluded, not counted as silence -- counting a dropped packet as zero
+  // drags RMS down and mislabels a good electrode as bad.
+  const withGap = sine(10, 256, 2);
+  for (let i = 0; i < 200; i++) withGap[i] = NaN;
+  check("NaN is excluded from RMS", assess(withGap, 256).quality === "good",
+        `got ${assess(withGap, 256).quality}`);
+
+  check("peak frequency is found", near(peakHz(sine(10, 256, 4), 256), 10, 1.5),
+        `got ${peakHz(sine(10, 256, 4), 256).toFixed(2)}`);
+}
+
+// -------------------------------------------------------------- protocol
+g("protocol");
+{
+  const r = new Round({ baseline: 30, stimulus: 30, post: 30, rest: 30 });
+  r.start(0);
+  check("t=0 is baseline", r.phaseAt(0) === "baseline");
+  check("t=29.9 is baseline", r.phaseAt(29.9) === "baseline");
+  check("t=30.1 is stimulus", r.phaseAt(30.1) === "stimulus");
+  check("t=60.1 is post", r.phaseAt(60.1) === "post");
+  check("t=90.1 is rest", r.phaseAt(90.1) === "rest");
+  check("t=120.1 is done", r.phaseAt(120.1) === "done");
+
+  const m = r.markers();
+  check("exactly four markers", m.length === 4, `got ${m.length}`);
+  check("markers in order",
+        m.map((x) => x.event).join() ===
+        "baseline_start,stimulus_start,post_start,trial_end",
+        m.map((x) => x.event).join());
+  // Stamped at the boundary, not at the polling time, so a slow frame cannot
+  // move a marker.
+  check("stimulus starts exactly 30 s after baseline",
+        near(m[1].ts - m[0].ts, 30, 1e-9), `got ${m[1].ts - m[0].ts}`);
+  check("stimulusAt matches the marker", near(r.stimulusAt, m[1].ts, 1e-9));
+
+  const r2 = new Round({ baseline: 30, stimulus: 30, post: 30, rest: 30 });
+  r2.start(0);
+  for (const t of [0, 5, 10, 30.1, 31, 60.1, 90.1, 120.1, 130]) r2.phaseAt(t);
+  check("markers are not re-emitted on repeated polling",
+        r2.markers().length === 4, `got ${r2.markers().length}`);
+}
+
+// ---------------------------------------------------------------- upload
+g("upload");
+{
+  check("six decimal places", toCsv(["t"], [[1 / 3]]) === "t\n0.333333\n",
+        JSON.stringify(toCsv(["t"], [[1 / 3]])));
+  check("NaN becomes an empty field, not the text NaN",
+        toCsv(["t", "v"], [[0, NaN]]) === "t,v\n0.000000,\n",
+        JSON.stringify(toCsv(["t", "v"], [[0, NaN]])));
+  check("newline endings, never CRLF", !toCsv(["t"], [[0]]).includes("\r"));
+
+  const env = envelope({ trial_id: "T1", condition: "stim" },
+                       { eeg: "timestamp,TP9\n0.000000,1.0\n" });
+  check("envelope has a blank line after the headers",
+        env.includes("condition: stim\n\n"), JSON.stringify(env.slice(0, 60)));
+  const eegBody = "timestamp,TP9\n0.000000,1.0\n";
+  const wantLen = new TextEncoder().encode(eegBody).length;
+  check("envelope length prefix counts bytes",
+        env.includes(`@eeg ${wantLen}\n`),
+        JSON.stringify(env.slice(env.indexOf("@"), env.indexOf("@") + 12)));
+
+  // Byte length and string length differ for multi-byte characters, and the
+  // server reads the payload by byte count. A note field with an accent in it
+  // would otherwise truncate the section.
+  const uni = envelope({ trial_id: "T" }, { eeg: "aéb" });
+  check("length prefix is bytes, not characters", uni.includes("@eeg 4\n"),
+        JSON.stringify(uni.slice(uni.indexOf("@"), uni.indexOf("@") + 10)));
+}
+
+// ------------------------------------------------------------------ tone
+g("tone");
+{
+  const SR = 48000;
+  const ctx = new OfflineAudioContext(1, SR, SR);
+  const render = (o) => renderStimulus(ctx, { seconds: 1, ...o }).getChannelData(0);
+  const rms = (a) => {
+    let s = 0;
+    for (const x of a) s += x * x;
+    return Math.sqrt(s / a.length);
+  };
+  // Envelope first. The signal is a 440 Hz carrier multiplied by the gate, so
+  // thresholding raw samples counts carrier cycles (~550/s) rather than
+  // pulses. Blocks of 5 ms sit well above the 2.3 ms carrier period and well
+  // below any gate period, so they smooth the carrier and keep the gate.
+  const onsets = (a) => {
+    const block = Math.round(SR * 0.005);
+    const env = [];
+    for (let i = 0; i + block <= a.length; i += block) {
+      let m = 0;
+      for (let j = i; j < i + block; j++) m = Math.max(m, Math.abs(a[j]));
+      env.push(m);
+    }
+    const peak = Math.max(...env);
+    if (peak <= 0) return 0;
+    const thr = peak * 0.5;
+    let n = 0, prev = false;
+    for (const x of env) {
+      const on = x > thr;
+      if (on && !prev) n++;
+      prev = on;
+    }
+    return n;
+  };
+
+  const stim = render({ condition: "stim", hz: 10 });
+  const jit = render({ condition: "control_jitter", jitterMeanHz: 10, seed: 7 });
+  const tone = render({ condition: "control_tone" });
+
+  check("stim gates at the requested rate", near(onsets(stim), 10, 1),
+        `got ${onsets(stim)}`);
+  // Loudness must not differ between stimulus and control, or loudness becomes
+  // the confound the controls exist to eliminate.
+  check("jitter control is RMS-matched",
+        near(rms(jit), rms(stim), rms(stim) * 0.05),
+        `stim ${rms(stim).toFixed(4)} jitter ${rms(jit).toFixed(4)}`);
+  check("tone control is RMS-matched",
+        near(rms(tone), rms(stim), rms(stim) * 0.05),
+        `stim ${rms(stim).toFixed(4)} tone ${rms(tone).toFixed(4)}`);
+  check("jitter control matches pulse count", near(onsets(jit), 10, 2),
+        `got ${onsets(jit)}`);
+  check("stacked rates never clip",
+        render({ condition: "stim", rates: [2, 8, 32] }).every((x) => Math.abs(x) <= 1));
+  const again = render({ condition: "control_jitter", jitterMeanHz: 10, seed: 7 });
+  check("a seed reproduces the same jitter", again.every((x, i) => x === jit[i]));
+  check("a different seed does not",
+        !render({ condition: "control_jitter", jitterMeanHz: 10, seed: 8 })
+          .every((x, i) => x === jit[i]));
+}
+
+// ---------------------------------------------------------------- report
+const fails = results.filter((r) => !r.ok);
+let html = `<h2 class="${fails.length ? "f" : "p"}">` +
+           `${results.length - fails.length}/${results.length} passed</h2>`;
+let last = "";
+for (const r of results) {
+  if (r.group !== last) { html += `<div class="grp">${r.group}</div>`; last = r.group; }
+  html += `<div class="${r.ok ? "p" : "f"}">${r.ok ? "PASS" : "FAIL"} ${r.name}` +
+          (r.detail ? ` <span class="d">— ${r.detail}</span>` : "") + `</div>`;
+}
+document.getElementById("out").innerHTML = html;
+</script>

@@ -1,0 +1,93 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Muse packet inspector</title>
+<style>
+  body { font: 13px/1.5 ui-monospace, Menlo, monospace;
+         background: #0b0d10; color: #e6e9ee; padding: 16px; margin: 0; }
+  h1 { font: 600 18px/1.4 -apple-system, system-ui, sans-serif; margin: 0 0 4px; }
+  p.sub { font-family: -apple-system, system-ui, sans-serif; color: #8b93a1;
+          margin: 0 0 16px; }
+  button { font-size: 17px; padding: 14px 22px; width: 100%; margin-bottom: 14px;
+           border-radius: 10px; border: 0; background: #3b82f6; color: #fff; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; color: #8b93a1; font-weight: 400; font-size: 11px;
+       text-transform: uppercase; letter-spacing: .06em; padding-bottom: 6px; }
+  td { padding: 5px 8px 5px 0; border-top: 1px solid #1c2128; vertical-align: top; }
+  .n { color: #8ab4f8; } .err { color: #ff6b6b; margin-bottom: 12px; }
+  .hex { color: #6b7280; font-size: 11px; word-break: break-all; }
+  .val { color: #39d98a; }
+</style>
+<h1>Packet inspector</h1>
+<p class="sub">Confirms the GATT table and the packet layout against the real headset.</p>
+<button id="go">Connect</button>
+<div id="err" class="err"></div>
+<table>
+  <thead><tr><th>stream</th><th>n</th><th>len</th><th>seq</th><th>decoded</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<script type="module">
+import { Muse } from "./muse.js";
+import { decodeEeg, decodePpg, decodeImu, ACCEL_SCALE, GYRO_SCALE } from "./decode.js";
+
+const muse = new Muse();
+const seen = new Map();
+
+muse.onRaw((name, dv) => {
+  const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+  const rec = seen.get(name) ?? { n: 0 };
+  rec.n++;
+  rec.len = dv.byteLength;
+  rec.hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+
+  // Decoded alongside the raw bytes so a packing error is visible immediately:
+  // EEG pinned at the rails, or an accelerometer that does not read about 1 g
+  // total while the headset sits still, means the layout is wrong.
+  try {
+    if (["TP9", "AF7", "AF8", "TP10"].includes(name)) {
+      const d = decodeEeg(dv);
+      rec.seq = d.seq;
+      rec.dec = d.samples.slice(0, 3).map((x) => x.toFixed(1)).join(", ") + " uV";
+    } else if (name.startsWith("ppg")) {
+      const d = decodePpg(dv);
+      rec.seq = d.seq;
+      rec.dec = d.samples.slice(0, 3).join(", ");
+    } else if (name === "accel" || name === "gyro") {
+      const d = decodeImu(dv, name === "accel" ? ACCEL_SCALE : GYRO_SCALE);
+      rec.seq = d.seq;
+      rec.dec = d.samples[0].map((x) => x.toFixed(3)).join(", ");
+    } else {
+      rec.seq = dv.getUint16(0, false);
+      rec.dec = "";
+    }
+  } catch (e) {
+    rec.dec = "decode error: " + e.message;
+  }
+  seen.set(name, rec);
+});
+
+// Repainting per packet would be hundreds of DOM writes a second on a phone.
+setInterval(() => {
+  document.getElementById("rows").innerHTML = [...seen.entries()]
+    .map(([k, r]) =>
+      `<tr><td>${k}</td><td class="n">${r.n}</td><td>${r.len}</td>` +
+      `<td>${r.seq ?? ""}</td><td class="val">${r.dec ?? ""}</td></tr>` +
+      `<tr><td colspan="5" class="hex">${r.hex ?? ""}</td></tr>`)
+    .join("");
+}, 500);
+
+document.getElementById("go").onclick = async () => {
+  const err = document.getElementById("err");
+  err.textContent = "";
+  try {
+    await muse.connect();
+    await muse.start();
+    document.getElementById("go").textContent = `streaming from ${muse.name}`;
+  } catch (e) {
+    err.textContent = e.message;
+  }
+};
+
+// Handy for capturing decode fixtures: run copy(dumpPackets()) in the console.
+window.dumpPackets = () => JSON.stringify([...seen], null, 1);
+</script>
