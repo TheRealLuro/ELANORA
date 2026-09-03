@@ -124,6 +124,7 @@ add_subdirectory(LSL)
 add_subdirectory(collector)
 add_subdirectory(data)
 add_subdirectory(models)
+add_subdirectory(server)
 
 message(STATUS "")
 message(STATUS "ELANORA configured")

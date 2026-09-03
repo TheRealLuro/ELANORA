@@ -7,11 +7,13 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <fstream>
 #include <random>
 #include <string>
 #include <vector>
 
 #include "elanora/collector/recorder.hpp"
+#include "elanora/collector/schema.hpp"
 #include "elanora/csv.hpp"
 
 using namespace elanora;
@@ -342,3 +344,54 @@ TEST_CASE("writing without an open trial is refused rather than crashing") {
     REQUIRE_FALSE(rec.write_survey(0, s, err));
 }
 
+
+TEST_CASE("the recorder writes exactly the declared schema", "[schema]") {
+    // The upload server writes these same files from phone uploads. Two copies
+    // of a column list drift, and a CSV with the wrong columns still parses --
+    // so the failure would show up as wrong numbers, not as an error.
+    REQUIRE(kEegHeader ==
+            std::vector<std::string>{"timestamp", "TP9", "AF7", "AF8", "TP10"});
+    REQUIRE(kPpgHeader ==
+            std::vector<std::string>{"timestamp", "ppg_red", "ppg_ir", "ppg_ambient"});
+    REQUIRE(kImuHeader ==
+            std::vector<std::string>{"timestamp", "ax", "ay", "az", "gx", "gy", "gz"});
+    REQUIRE(kMarkersHeader == std::vector<std::string>{"timestamp", "event"});
+    REQUIRE(kTrialsHeader.front() == "trial_id");
+    REQUIRE(kSurveysHeader.front() == "trial_id");
+    REQUIRE(kSessionsHeader.front() == "session_id");
+}
+
+TEST_CASE("a recorded round's files carry the declared headers", "[schema]") {
+    // Pins the constants to what actually reaches disk. Asserting the vectors
+    // alone would still pass if recorder.cpp went on using its own literals.
+    TempDir tmp;
+    TrialRecorder rec;
+    StimulusDesign design;
+    design.layers.push_back(Layer{10.0, 1.0, true});
+    Durations d;
+    std::string err;
+    REQUIRE(rec.begin_trial(tmp.path, "P01", 1, design, d, 42, 1, err));
+
+    PlannedRound round{Condition::Stim, 10.0, 0.0};
+    lsl::ChannelMap ch;
+    ch.eeg = {1, 2, 3, 4};
+    std::vector<lsl::Sample> eeg{lsl::Sample{0.0, {0.0, 1.0, 2.0, 3.0, 4.0}}};
+    REQUIRE(rec.write_round(0, round, eeg, {}, {}, {}, ch, err));
+
+    const auto dir = tmp.path / "raw" / rec.session_id();
+    // Rebuilt rather than calling the private trial_row_id(): widening a
+    // class's API for a test's convenience is a worse trade than repeating a
+    // format string the schema test would catch anyway.
+    const std::string tid = rec.session_id() + "_R01";
+    std::ifstream in(dir / (tid + "_eeg.csv"));
+    std::string header;
+    std::getline(in, header);
+    if (!header.empty() && header.back() == '\r') header.pop_back();
+
+    std::string expect;
+    for (std::size_t i = 0; i < kEegHeader.size(); ++i) {
+        if (i) expect += ',';
+        expect += kEegHeader[i];
+    }
+    REQUIRE(header == expect);
+}

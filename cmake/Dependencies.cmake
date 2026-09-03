@@ -305,3 +305,20 @@ if(ELANORA_BUILD_APPS)
   target_include_directories(miniaudio INTERFACE "${CMAKE_SOURCE_DIR}/collector/third_party")
   add_library(miniaudio::miniaudio ALIAS miniaudio)
 endif()
+
+# ---------------------------------------------------------------------------
+# cpp-httplib -- the web collector's host
+# ---------------------------------------------------------------------------
+# Header-only, so it costs a download and nothing else at link time.
+#
+# No TLS yet. Whether the phone needs HTTPS depends on whether Bluefy enforces
+# secure context for Web Bluetooth, which is a two-minute probe; pulling in
+# OpenSSL on MSVC before knowing would be a large cost for a maybe.
+if(ELANORA_BUILD_APPS)
+  FetchContent_Declare(httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG        v0.15.3
+    GIT_SHALLOW    TRUE
+  )
+  FetchContent_MakeAvailable(httplib)
+endif()

@@ -5,6 +5,7 @@
 #include <ctime>
 #include <fstream>
 
+#include "elanora/collector/schema.hpp"
 #include "elanora/csv.hpp"
 
 namespace elanora::collector {
@@ -62,19 +63,20 @@ bool append_row(const fs::path& file, const std::vector<std::string>& header,
 // the ones currently used -- a feature invented next year has to be computable
 // from these files without repeating the experiment.
 bool write_stream(const fs::path& file, const std::vector<lsl::Sample>& samples,
-                  const std::vector<std::string>& names, int ts_row, std::string& err) {
+                  const std::vector<std::string>& header, int ts_row, std::string& err) {
     if (samples.empty()) return true;   // a board without this stream is not an error
 
-    std::vector<std::string> header;
-    header.push_back("timestamp");
-    for (const auto& n : names) header.push_back(n);
+    // header[0] is "timestamp"; the rest are the value columns, in channel
+    // order. Taken whole from schema.hpp rather than rebuilt here, so the
+    // desktop recorder and the upload server cannot disagree about it.
+    const std::size_t n_values = header.size() - 1;
 
     try {
         CsvWriter w(file, header);
         std::vector<std::string> row(header.size());
         for (const auto& s : samples) {
             row[0] = fmt6(s.ts);
-            for (std::size_t c = 0; c < names.size(); ++c) {
+            for (std::size_t c = 0; c < n_values; ++c) {
                 // Channel indices come from the ChannelMap, so a board with a
                 // different layout still lands in the right column.
                 const std::size_t idx = c + 1u;
@@ -127,9 +129,7 @@ bool TrialRecorder::begin_trial(const fs::path& root, const std::string& subject
 
     const bool ok = append_row(
         root_ / "sessions.csv",
-        {"session_id", "subject_id", "trial_number", "date", "stim_mode",
-         "carrier_hz", "duty_cycle", "baseline_s", "stimulus_s", "post_s", "rest_s",
-         "order_seed", "round_count", "quality_override"},
+        kSessionsHeader,
         {session_id_, subject_, std::to_string(trial_number), today(), mode,
          fmt6(design.carrier_hz), fmt6(design.duty), fmt6(d.baseline), fmt6(d.stimulus),
          fmt6(d.post), fmt6(d.rest), seed_s, std::to_string(round_count),
@@ -159,22 +159,16 @@ bool TrialRecorder::write_round(int round_index, const PlannedRound& round,
 
     const std::string tid = trial_row_id(round_index);
 
-    std::vector<std::string> eeg_names;
-    for (int i = 0; i < kSensorCount && i < static_cast<int>(channels.eeg.size()); ++i) {
-        eeg_names.push_back(electrode_name(static_cast<SensorId>(i)));
-    }
-    if (eeg_names.empty()) eeg_names = {"TP9", "AF7", "AF8", "TP10"};
-
-    if (!write_stream(session_dir_ / (tid + "_eeg.csv"), eeg, eeg_names,
+    if (!write_stream(session_dir_ / (tid + "_eeg.csv"), eeg, kEegHeader,
                       channels.ts_eeg, err)) return false;
     // Index 0 is red 660nm, 1 is IR 940nm, 2 is the ambient reference.
-    if (!write_stream(session_dir_ / (tid + "_ppg.csv"), ppg,
-                      {"ppg_red", "ppg_ir", "ppg_ambient"}, channels.ts_ppg, err)) return false;
-    if (!write_stream(session_dir_ / (tid + "_imu.csv"), imu,
-                      {"ax", "ay", "az", "gx", "gy", "gz"}, channels.ts_imu, err)) return false;
+    if (!write_stream(session_dir_ / (tid + "_ppg.csv"), ppg, kPpgHeader,
+                      channels.ts_ppg, err)) return false;
+    if (!write_stream(session_dir_ / (tid + "_imu.csv"), imu, kImuHeader,
+                      channels.ts_imu, err)) return false;
 
     try {
-        CsvWriter mw(session_dir_ / (tid + "_markers.csv"), {"timestamp", "event"});
+        CsvWriter mw(session_dir_ / (tid + "_markers.csv"), kMarkersHeader);
         for (const auto& m : markers) mw.row(std::vector<std::string>{fmt6(m.ts), m.event});
     } catch (const CsvError& e) {
         err = e.what();
@@ -183,9 +177,7 @@ bool TrialRecorder::write_round(int round_index, const PlannedRound& round,
 
     const char* cond = condition_name(round.cond);
     if (!append_row(root_ / "trials.csv",
-                    {"trial_id", "session_id", "subject_id", "round_index", "condition",
-                     "frequency_hz", "jitter_mean_hz", "started_at",
-                     "n_eeg", "n_ppg", "n_imu"},
+                    kTrialsHeader,
                     {tid, session_id_, subject_, std::to_string(round_index + 1), cond,
                      fmt6(round.hz), fmt6(round.jitter_mean_hz),
                      markers.empty() ? "" : fmt6(markers.front().ts),
@@ -218,10 +210,7 @@ bool TrialRecorder::write_survey(int round_index, const Survey& s, std::string& 
 
     return append_row(
         root_ / "surveys.csv",
-        {"trial_id", "session_id", "subject_id", "round_index", "relaxation", "alertness",
-         "pleasantness", "discomfort", "breathing_perceived", "breaths_self_count",
-         "heard_rhythm", "artifact_jaw", "artifact_move", "artifact_eyes",
-         "artifact_swallow", "artifact_noise", "note"},
+        kSurveysHeader,
         {trial_row_id(round_index), session_id_, subject_, std::to_string(round_index + 1),
          std::to_string(s.relaxation), std::to_string(s.alertness),
          std::to_string(s.pleasantness), std::to_string(s.discomfort), breathing, breaths,

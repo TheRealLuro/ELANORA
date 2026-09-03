@@ -1,0 +1,57 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ELANORA probe</title>
+<style>
+  body { font: 16px/1.6 -apple-system, system-ui, sans-serif;
+         background: #0b0d10; color: #e6e9ee; padding: 24px 20px 48px; margin: 0; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { color: #8b93a1; margin: 0 0 24px; }
+  .row { padding: 12px 0; border-bottom: 1px solid #1c2128; }
+  .k { color: #8b93a1; font-size: 13px; }
+  .v { font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+  .yes { color: #39d98a; } .no { color: #ff6b6b; }
+  .verdict { margin-top: 24px; padding: 16px; border-radius: 10px;
+             background: #12161c; border: 1px solid #1c2128; }
+</style>
+<h1>ELANORA probe</h1>
+<p class="sub">Answers one question: can this browser reach the Muse?</p>
+<div id="out"></div>
+<div class="verdict" id="verdict"></div>
+<script>
+  const secure = window.isSecureContext === true;
+  const hasBt = "bluetooth" in navigator;
+  const callable = typeof navigator.bluetooth?.requestDevice === "function";
+
+  const rows = [
+    ["Page origin", location.origin, location.protocol !== "file:"],
+    ["isSecureContext", String(secure), secure],
+    ["navigator.bluetooth present", String(hasBt), hasBt],
+    ["requestDevice callable", String(callable), callable],
+    ["User agent", navigator.userAgent, true],
+  ];
+
+  document.getElementById("out").innerHTML = rows.map(
+    ([k, v, ok]) =>
+      `<div class="row"><div class="k">${k}</div>` +
+      `<div class="v ${ok ? "yes" : "no"}">${v}</div></div>`
+  ).join("");
+
+  // The whole point of the page. Which of these three the operator sees
+  // decides whether the server needs TLS at all.
+  let verdict;
+  if (callable) {
+    verdict = `<b class="yes">Good.</b> Web Bluetooth is available over plain HTTP
+               on this network. The collector can be served as-is, with no
+               certificate to install.`;
+  } else if (!secure) {
+    verdict = `<b class="no">Not a secure context.</b> This browser is withholding
+               Web Bluetooth because the page came over plain HTTP. The server
+               needs HTTPS, which means a certificate the phone trusts.`;
+  } else {
+    verdict = `<b class="no">Secure, but no Web Bluetooth.</b> The context is fine,
+               so this browser simply does not implement the API. On iOS, Safari
+               never has. Open this same page in <b>Bluefy</b>.`;
+  }
+  document.getElementById("verdict").innerHTML = verdict;
+</script>
