@@ -35,8 +35,28 @@ enum class StimMode {
     Stacked   // every enabled layer sounds together in the same round
 };
 
+// The shape of the amplitude envelope on a stimulus round.
+//
+// Two ways to deliver the same rate, and they are not equivalent stimuli. A
+// gated pulse train switches the carrier hard on and off, so its envelope is a
+// square wave whose spectrum contains the rate AND all its odd harmonics -- a
+// 10 Hz isochronic tone also drives 30, 50 and 70 Hz. A sine envelope puts
+// energy at the modulation rate and nowhere else.
+//
+// That difference matters for what a response means: an alpha change under a
+// gated 10 Hz stimulus could be driven by the harmonics rather than by 10 Hz
+// itself, and only the sine condition can separate the two. They are offered
+// as separate session types so each can be learned from on its own.
+enum class Envelope {
+    Gated,   // isochronic: hard on/off at the rate, raised-cosine edges
+    Wave     // sinusoidal amplitude modulation at the rate
+};
+
+const char* envelope_name(Envelope e);
+
 struct StimulusDesign {
     StimMode           mode       = StimMode::Single;
+    Envelope           envelope   = Envelope::Gated;
     std::vector<Layer> layers;
     double             carrier_hz = 440.0;
     double             duty       = 0.5;

@@ -28,9 +28,10 @@ constexpr int kFrames = kSr;   // one second
 constexpr int kProbes[] = {0, 100, 1000, 5000, 12000, 24000, 36000, 47999};
 
 std::vector<float> render(Condition cond, double hz, double jitter_hz,
-                          uint64_t seed) {
+                          uint64_t seed, Envelope env = Envelope::Gated) {
     StimulusDesign design;
     design.mode = StimMode::Single;
+    design.envelope = env;
     design.carrier_hz = 440.0;
     design.duty = 0.5;
     design.layers.push_back(Layer{hz, 1.0, true});
@@ -72,7 +73,9 @@ int main() {
 
     emit("stim_10hz", render(Condition::Stim, 10.0, 0.0, 1), false);
     emit("control_jitter_10hz", render(Condition::ControlJitter, 0.0, 10.0, 7), false);
-    emit("control_tone", render(Condition::ControlTone, 0.0, 0.0, 1), true);
+    emit("control_tone", render(Condition::ControlTone, 0.0, 0.0, 1), false);
+    emit("wave_10hz", render(Condition::Stim, 10.0, 0.0, 1, Envelope::Wave), false);
+    emit("wave_45hz", render(Condition::Stim, 45.0, 0.0, 1, Envelope::Wave), true);
 
     std::printf("}\n");
     return 0;

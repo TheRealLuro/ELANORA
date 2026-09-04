@@ -172,3 +172,109 @@ TEST_CASE("a stimulus round with no frequency is silent rather than undefined", 
     g.set_gate(true);
     for (float s : render(g, 0.2)) REQUIRE(s == 0.0f);
 }
+
+TEST_CASE("every stimulus rate is equally loud", "[tone][loudness]") {
+    // The confound this guards against is subtle and was real: the 4 ms
+    // follower that rounds gate edges removes more energy the more edges there
+    // are, so RMS fell from 0.2495 at 0.5 Hz to 0.2065 at 45 Hz -- the top of
+    // the sweep was 17% quieter than the bottom.
+    //
+    // Loudness covarying with stimulus frequency is exactly the confound the
+    // three-condition RMS match exists to eliminate, arriving through the back
+    // door. It would not have been caught by that check, which compares stim
+    // against control at ONE rate rather than rates against each other.
+    const int sr = 48000;
+    const auto freqs = geometric_set(kProtocolFreqLo, kProtocolFreqHi, kProtocolFreqCount);
+
+    std::vector<double> levels;
+    for (double hz : freqs) {
+        StimulusDesign d;
+        d.mode = StimMode::Single;
+        d.carrier_hz = 440.0;
+        d.duty = 0.5;
+        d.layers.push_back(Layer{hz, 1.0, true});
+
+        ToneGenerator g(sr);
+        g.configure(d, Condition::Stim, hz, 0.0, 1);
+        g.set_gate(true);
+        // Eight seconds, so even 0.5 Hz contributes whole cycles.
+        const int frames = sr * 8;
+        std::vector<float> buf(static_cast<std::size_t>(frames) * 2, 0.0f);
+        g.render(buf.data(), frames);
+        levels.push_back(ToneGenerator::rms(buf.data(), frames));
+    }
+
+    const double lo = *std::min_element(levels.begin(), levels.end());
+    const double hi = *std::max_element(levels.begin(), levels.end());
+    INFO("quietest " << lo << " loudest " << hi << " spread " << (hi / lo - 1.0) * 100 << "%");
+    REQUIRE(hi / lo < 1.05);
+}
+
+TEST_CASE("a wave round matches a gated round in loudness", "[tone][loudness]") {
+    // The two envelopes are meant to differ in shape and in nothing else. If
+    // the wave condition were louder, any difference between them would be
+    // confounded with volume rather than telling us about envelope shape.
+    const int sr = 48000;
+    auto level = [&](Envelope env, double hz) {
+        StimulusDesign d;
+        d.mode = StimMode::Single;
+        d.envelope = env;
+        d.carrier_hz = 440.0;
+        d.duty = 0.5;
+        d.layers.push_back(Layer{hz, 1.0, true});
+        ToneGenerator g(sr);
+        g.configure(d, Condition::Stim, hz, 0.0, 1);
+        g.set_gate(true);
+        std::vector<float> buf(static_cast<std::size_t>(sr) * 2 * 4, 0.0f);
+        g.render(buf.data(), sr * 4);
+        return ToneGenerator::rms(buf.data(), sr * 4);
+    };
+
+    for (double hz : {1.0, 10.0, 45.0}) {
+        const double gated = level(Envelope::Gated, hz);
+        const double wave = level(Envelope::Wave, hz);
+        INFO("at " << hz << " Hz: gated " << gated << " wave " << wave);
+        REQUIRE(wave == Catch::Approx(gated).epsilon(0.05));
+    }
+}
+
+TEST_CASE("a wave envelope carries no harmonics of its rate", "[tone][envelope]") {
+    // The reason both envelopes exist. A gated train's envelope is a square
+    // wave, so a 10 Hz isochronic tone also drives 30, 50 and 70 Hz, and an
+    // alpha response to it cannot be attributed to 10 Hz alone. A sine
+    // envelope puts energy at the rate and nowhere else, which is what makes
+    // the two separable.
+    const int sr = 4800;
+    auto envelope_at_3f = [&](Envelope env) {
+        StimulusDesign d;
+        d.mode = StimMode::Single;
+        d.envelope = env;
+        d.carrier_hz = 440.0;
+        d.duty = 0.5;
+        d.layers.push_back(Layer{10.0, 1.0, true});
+        ToneGenerator g(sr);
+        g.configure(d, Condition::Stim, 10.0, 0.0, 1);
+        g.set_gate(true);
+        std::vector<float> buf(static_cast<std::size_t>(sr) * 2, 0.0f);
+        g.render(buf.data(), sr);
+
+        // Rectify to recover the envelope, then measure the 30 Hz component
+        // relative to the 10 Hz one.
+        auto power_at = [&](double f) {
+            double re = 0.0, im = 0.0;
+            for (int i = 0; i < sr; ++i) {
+                const double e = std::abs(static_cast<double>(buf[i * 2]));
+                const double a = 2.0 * 3.14159265358979 * f * i / sr;
+                re += e * std::cos(a);
+                im += e * std::sin(a);
+            }
+            return (re * re + im * im) / (static_cast<double>(sr) * sr);
+        };
+        return power_at(30.0) / std::max(power_at(10.0), 1e-12);
+    };
+
+    const double gated_ratio = envelope_at_3f(Envelope::Gated);
+    const double wave_ratio = envelope_at_3f(Envelope::Wave);
+    INFO("third-harmonic ratio: gated " << gated_ratio << " wave " << wave_ratio);
+    REQUIRE(wave_ratio < gated_ratio * 0.1);
+}

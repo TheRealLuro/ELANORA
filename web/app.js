@@ -12,7 +12,10 @@ import {
   EEG_PER_PACKET, PPG_PER_PACKET, IMU_PER_PACKET,
 } from "./decode.js";
 import { Stream } from "./ringbuffer.js";
-import { assess, bandPowers, peakHz, BAND_NAMES } from "./dsp.js";
+import {
+  assess, bandPowers, peakHz, BAND_NAMES,
+  heartRate, breathRate, motionEnergy,
+} from "./dsp.js";
 import { Session } from "./collector.js";
 
 const SR_EEG = 256, SR_PPG = 64, SR_IMU = 52;
@@ -135,11 +138,62 @@ function electrodeRows() {
   return { html: rows.join(""), dropped };
 }
 
+
+// Heart, breathing and motion.
+//
+// Over a longer window than the electrode check: a heart rate needs several
+// beats and a breathing rate several cycles, so 20 s rather than 2. Both are
+// display only -- elanora_data recomputes them from the raw samples.
+function vitalRows() {
+  const t = now();
+  const ir = streams.ppgIr.slice(t - 20, t).v;
+  const hr = heartRate(ir, SR_PPG);
+
+  // De-interleave the six axes the two IMU streams carry.
+  const a = streams.accel.slice(t - 30, t).v;
+  const gy = streams.gyro.slice(t - 30, t).v;
+  const axes = [0, 1, 2].map((k) => a.filter((_, i) => i % 3 === k))
+    .concat([0, 1, 2].map((k) => gy.filter((_, i) => i % 3 === k)));
+  const br = breathRate(axes, SR_IMU);
+  const motion = motionEnergy(axes.slice(0, 3), SR_IMU);
+
+  const hrOk = hr.bpm >= 50 && hr.bpm <= 100;
+  const brOk = br.brpm >= 6 && br.brpm <= 25;
+  const still = motion < 0.05;
+
+  return { hr, br, motion, hrOk, brOk, still };
+}
+
+function paintVitals(inRun) {
+  const { hr, br, motion, hrOk, brOk, still } = vitalRows();
+  if (inRun) {
+    el("run-vitals").innerHTML =
+      `<tr><td class="name">Heart</td><td class="num ${hrOk ? "good" : "bad"}">` +
+      `${hr.bpm ? hr.bpm.toFixed(0) + " bpm" : "—"}</td>` +
+      `<td class="num ${brOk ? "good" : "bad"}">` +
+      `${br.brpm ? br.brpm.toFixed(1) + " br/min" : "—"}</td>` +
+      `<td class="num ${still ? "good" : "warn"}">${motion.toFixed(3)}</td></tr>`;
+    return;
+  }
+  el("v-hr").textContent = hr.bpm ? `${hr.bpm.toFixed(0)} bpm` : "—";
+  el("v-hr").className = `num ${hr.bpm ? (hrOk ? "good" : "warn") : ""}`;
+  el("v-hr-n").textContent = hr.beats ? `${hr.beats} beats` : "no pulse found";
+
+  el("v-br").textContent = br.brpm ? `${br.brpm.toFixed(1)} br/min` : "—";
+  el("v-br").className = `num ${br.brpm ? (brOk ? "good" : "warn") : ""}`;
+  el("v-br-ax").textContent = br.axis ? `on ${br.axis}` : "";
+
+  el("v-mot").textContent = motion.toFixed(3);
+  el("v-mot").className = `num ${still ? "good" : "warn"}`;
+  el("v-mot-l").textContent = still ? "still" : "artifacts likely";
+}
+
 setInterval(() => {
   if (!muse.connected) return;
   const { html, dropped } = electrodeRows();
   const target = el("screen-run").hidden ? "electrodes" : "run-electrodes";
   el(target).innerHTML = html;
+  paintVitals(!el("screen-run").hidden);
   const drops = el("screen-run").hidden ? "drops" : "run-drops";
   // Dropped packets are reported rather than hidden. A rising count means the
   // phone is too far from the headset, and that is fixable in the moment.
@@ -163,6 +217,21 @@ const reseed = () => {
   el("seed-val").textContent = session.seed;
 };
 el("reseed").onclick = reseed;
+
+// Envelope shape is a session-level choice, not a per-round one.
+//
+// Interleaving both within a session would double it to 36 rounds and 72
+// minutes. The plan already asks for two sessions per subject, so running one
+// shape in each gives the within-subject comparison for free -- at the cost of
+// confounding shape with session order, which is why the order should be
+// alternated between subjects.
+for (const b of el("s-envelope").querySelectorAll("button")) {
+  b.onclick = () => {
+    for (const o of el("s-envelope").querySelectorAll("button")) o.classList.remove("on");
+    b.classList.add("on");
+    session.envelope = b.dataset.v;
+  };
+}
 el("subject").oninput = () => {
   session.subject = el("subject").value.trim() || "P01";
 };
@@ -196,6 +265,7 @@ el("start").onclick = async () => {
     await session.initAudio();
     await holdScreen();
     session.subject = el("subject").value.trim() || "P01";
+    session.ageBand = el("age-band").value.trim();
     if (!session.schedule.length) await session.fetchSchedule();
     show("run");
     await session.start();

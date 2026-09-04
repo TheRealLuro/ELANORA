@@ -40,6 +40,9 @@ export class Session {
     this.roundIndex = 0;
     this.sessionId = "";
     this.subject = "P01";
+    this.ageBand = "";
+    // "gated" (isochronic) or "wave" (sinusoidal AM).
+    this.envelope = "gated";
     this.trialNumber = 1;
     this.seed = 84120;
     this.durations = { baseline: 30, stimulus: 30, post: 30, rest: 30 };
@@ -105,8 +108,29 @@ export class Session {
     this.running = true;
     this.roundIndex = 0;
 
+    // subjects.csv is in the schema and nothing was writing it. A duplicate
+    // row per session is harmless -- the analysis reads the subject list, not
+    // its cardinality -- and it keeps the file honest without the phone having
+    // to know whether this subject already exists.
+    await this.#post("/subject",
+                     { subject_id: this.subject, age_band: this.ageBand, notes: "" });
     await this.#postSession();
     await this.#runAll();
+  }
+
+  // Small keyed POST, used for the metadata tables. A failure here never stops
+  // a subject who is already wearing the headset: every one of these rows can
+  // be reconstructed from the trial rows afterwards.
+  async #post(path, fields) {
+    let body = "";
+    for (const [k, v] of Object.entries(fields)) body += `${k}: ${v}
+`;
+    try {
+      await fetch(path, { method: "POST", headers: authHeaders(), body });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async #postSession() {
@@ -115,7 +139,10 @@ export class Session {
       subject_id: this.subject,
       trial_number: this.trialNumber,
       date: this.sessionId.split("_")[2].slice(0, 8),
-      stim_mode: "sweep",
+      // Recorded so the analysis can tell the two envelope shapes apart. It
+      // rides in stim_mode rather than a new column, so nothing downstream has
+      // to change to read a dataset that mixes them.
+      stim_mode: `sweep_${this.envelope}`,
       carrier_hz: (440).toFixed(6),
       duty_cycle: (0.5).toFixed(6),
       baseline_s: this.durations.baseline.toFixed(6),
@@ -162,6 +189,7 @@ export class Session {
       jitterMeanHz: Number(spec.jitter_mean_hz) || 10,
       seed: this.seed + i,
       seconds: this.durations.stimulus,
+      envelope: this.envelope,
     });
 
     const t0 = this.#now();

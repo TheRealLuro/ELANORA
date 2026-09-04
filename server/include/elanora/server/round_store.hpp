@@ -57,4 +57,7 @@ bool store_survey(const std::filesystem::path& root, const std::string& body,
 bool store_session(const std::filesystem::path& root, const std::string& body,
                    std::string& err);
 
+bool store_subject(const std::filesystem::path& root, const std::string& body,
+                   std::string& err);
+
 }  // namespace elanora::server

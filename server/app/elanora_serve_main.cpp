@@ -194,6 +194,21 @@ int main(int argc, char** argv) {
         res.set_content("stored", "text/plain");
     });
 
+    srv.Post("/subject", [&root, &token](const httplib::Request& req, httplib::Response& res) {
+        if (!authorized(req, token)) {
+            res.status = 401;
+            res.set_content("bad or missing write token", "text/plain");
+            return;
+        }
+        std::string err;
+        if (!elanora::server::store_subject(root, req.body, err)) {
+            res.status = 400;
+            res.set_content(err, "text/plain");
+            return;
+        }
+        res.set_content("stored", "text/plain");
+    });
+
     std::printf("elanora_serve  web=%s  root=%s\n", web.c_str(), root.c_str());
     std::printf("  open on the phone, in Bluefy:\n%s", local_addresses(port).c_str());
     std::fflush(stdout);

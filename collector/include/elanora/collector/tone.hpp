@@ -45,9 +45,14 @@ public:
 private:
     double next_jitter_gap();
 
+    // Measured once per round so every gated rate is equally loud.
+    double normalising_gain();
+
     int    sr_;
     Condition cond_ = Condition::Stim;
     StimMode  mode_ = StimMode::Single;
+    Envelope  envelope_ = Envelope::Gated;
+    double    env_gain_ = 1.0;
     double carrier_hz_ = 440.0;
     double duty_ = 0.5;
     double amplitude_ = 0.5;

@@ -375,4 +375,9 @@ bool store_session(const fs::path& root, const std::string& body, std::string& e
                        "session_id", err);
 }
 
+bool store_subject(const fs::path& root, const std::string& body, std::string& err) {
+    return store_keyed(root, "subjects.csv", collector::kSubjectsHeader, body,
+                       "subject_id", err);
+}
+
 }  // namespace elanora::server

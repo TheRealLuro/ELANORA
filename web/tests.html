@@ -322,6 +322,8 @@ g("tone conformance");
     ["stim_10hz", { condition: "stim", hz: 10, seed: 1 }],
     ["control_jitter_10hz", { condition: "control_jitter", jitterMeanHz: 10, seed: 7 }],
     ["control_tone", { condition: "control_tone", seed: 1 }],
+    ["wave_10hz", { condition: "stim", hz: 10, seed: 1, envelope: "wave" }],
+    ["wave_45hz", { condition: "stim", hz: 45, seed: 1, envelope: "wave" }],
   ];
 
   for (const [name, opts] of cases) {

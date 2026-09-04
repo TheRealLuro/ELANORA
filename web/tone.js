@@ -19,6 +19,11 @@ const TAU = 6.283185307179586;
 // simply louder than every stimulus round.
 const CONTINUOUS_SCALE = 0.70710678118654752;
 
+// Sine-envelope rounds are scaled so they match a gated round in loudness.
+// A 50%-duty gated sine has mean square A^2/4; a sine-modulated one with
+// envelope (1-cos)/2 has 3A^2/16. Equalising the two gives 2/sqrt(3).
+const WAVE_SCALE = 1.1547005383792515;
+
 // xorshift64, matching ToneGenerator::next_jitter_gap, so a recorded jitter
 // round can be regenerated exactly from its seed when reviewing a session.
 function xorshift(state) {
@@ -40,6 +45,7 @@ export function renderStimulus(ctx, opts) {
     duty = 0.5,
     seconds = 30,
     amplitude = 0.5,
+    envelope = "gated",
   } = opts;
 
   const sr = ctx.sampleRate;
@@ -67,6 +73,41 @@ export function renderStimulus(ctx, opts) {
     return (1 / jitterMeanHz) * (1 - clampedDuty) * (0.55 + 0.9 * u);
   };
 
+  // Per-round gain that makes every gated rate equally loud.
+  //
+  // The 4 ms follower that rounds gate edges also removes energy, and removes
+  // more of it the more edges there are: across the protocol's own frequency
+  // set, RMS fell from 0.2495 at 0.5 Hz to 0.2065 at 45 Hz, so the top of the
+  // sweep was 17% quieter than the bottom. Loudness covarying with stimulus
+  // frequency is the confound the RMS matching exists to eliminate.
+  //
+  // Measured over whole periods of the SLOWEST layer: a fixed one-second
+  // window puts 0.5 Hz, whose period is two seconds, at 0.177 instead of 0.250.
+  const normalisingGain = () => {
+    if (condition !== "stim" || envelope !== "gated") return 1;
+    const positive = layers.filter((r) => r > 0);
+    if (!positive.length) return 1;
+    const slowest = Math.min(...positive);
+
+    const steps = Math.round(sr * Math.max(1, 8 / slowest));
+    const ph = layers.map(() => 0);
+    let e = 0;
+    let acc = 0;
+    for (let i = 0; i < steps; i++) {
+      let sum = 0;
+      for (let l = 0; l < layers.length; l++) {
+        ph[l] += layers[l] * dt;
+        if (ph[l] >= 1) ph[l] -= 1;
+        sum += ph[l] < clampedDuty ? 1 : 0;
+      }
+      e += (sum / layers.length - e) * rampCoeff;
+      acc += e * e;
+    }
+    const measured = Math.sqrt(acc / steps);
+    return measured > 1e-9 ? Math.sqrt(clampedDuty) / measured : 1;
+  };
+  const envGain = normalisingGain();
+
   let env = 0;
   let carrier = 0;
   let jT = 0;
@@ -92,22 +133,30 @@ export function renderStimulus(ctx, opts) {
       }
       target = jOn ? 1 : 0;
     } else {
-      // Sum the gates and divide by the layer count, so stacking can never clip
-      // and adding a layer never raises the level.
+      // Sum the envelopes and divide by the layer count, so stacking can never
+      // clip and adding a layer never raises the level.
       let sum = 0;
       for (let l = 0; l < layers.length; l++) {
         gatePhase[l] += layers[l] * dt;
         if (gatePhase[l] >= 1) gatePhase[l] -= 1;
-        sum += gatePhase[l] < clampedDuty ? 1 : 0;
+        sum += envelope === "wave"
+          ? (1 - Math.cos(TAU * gatePhase[l])) * 0.5 * WAVE_SCALE
+          : (gatePhase[l] < clampedDuty ? 1 : 0);
       }
       target = sum / layers.length;
     }
 
-    env += (target - env) * rampCoeff;
+    // The follower exists to round hard gate edges. A sine envelope has none,
+    // and a 4 ms low-pass sits near 40 Hz, so at the top of the frequency set
+    // it would measurably shrink the modulation depth -- quietly making a
+    // 45 Hz wave round a weaker stimulus than a 4 Hz one.
+    if (envelope === "wave" && condition === "stim") env = target;
+    else env += (target - env) * rampCoeff;
+
     carrier += carrierInc;
     if (carrier >= TAU) carrier -= TAU;
 
-    out[i] = Math.sin(carrier) * env * amplitude;
+    out[i] = Math.sin(carrier) * env * amplitude * envGain;
   }
   return buf;
 }

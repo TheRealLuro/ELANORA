@@ -16,6 +16,9 @@
 
 namespace elanora::collector {
 
+inline const std::vector<std::string> kSubjectsHeader = {
+    "subject_id", "age_band", "notes"};
+
 inline const std::vector<std::string> kSessionsHeader = {
     "session_id", "subject_id", "trial_number", "date", "stim_mode",
     "carrier_hz", "duty_cycle", "baseline_s", "stimulus_s", "post_s", "rest_s",
