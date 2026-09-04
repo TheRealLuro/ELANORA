@@ -22,9 +22,16 @@ const streams = {
   ppgRed: new Stream(SR_PPG, PPG_PER_PACKET),
   ppgIr: new Stream(SR_PPG, PPG_PER_PACKET),
   ppgAmbient: new Stream(SR_PPG, PPG_PER_PACKET),
-  // Three axes per sample, so the ring buffer sees 3x the samples per packet.
-  accel: new Stream(SR_IMU, IMU_PER_PACKET * 3),
-  gyro: new Stream(SR_IMU, IMU_PER_PACKET * 3),
+  // Three axes per reading, stored interleaved, so the stream counts VALUES
+  // rather than readings: 3x the rate and 3x the packet size.
+  //
+  // Passing the reading rate here advanced time by 1/52 s per value instead of
+  // per reading, so IMU time ran three times too slow. A breathing rate derived
+  // from it would read as a third of its true value -- 4 breaths/min instead of
+  // 12 -- which is low but not absurd, so it would have passed the sanity check
+  // and become a finding rather than a bug.
+  accel: new Stream(SR_IMU * 3, IMU_PER_PACKET * 3),
+  gyro: new Stream(SR_IMU * 3, IMU_PER_PACKET * 3),
 };
 
 const muse = new Muse();

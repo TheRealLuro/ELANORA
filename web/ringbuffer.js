@@ -18,11 +18,15 @@ export class Stream {
   #rate;
   #perPacket;
   #t0 = 0;
-  #first = null;
+  #started = false;
   #last = null;
   #v = [];
   #dropped = 0;
   #cap;
+  // Samples discarded off the front by the cap. Time is measured from the
+  // first sample ever received, so trimming the window must not shift the
+  // remaining samples backwards.
+  #origin = 0;
 
   constructor(rate, perPacket, seconds = 240) {
     this.#rate = rate;
@@ -38,8 +42,8 @@ export class Stream {
 
   push(seq, samples) {
     const u = this.#last === null ? seq : unwrap(this.#last, seq);
-    if (this.#first === null) {
-      this.#first = u;
+    if (!this.#started) {
+      this.#started = true;
       this.#last = u - 1;
     }
     // Bluetooth redelivers and reorders. A packet at or behind the high-water
@@ -56,21 +60,30 @@ export class Stream {
     if (this.#v.length > this.#cap) {
       const drop = this.#v.length - this.#cap;
       this.#v.splice(0, drop);
-      // first tracks the packet index of v[0], so it has to move with the
-      // window or every timestamp after the first trim would be wrong.
-      this.#first += drop / this.#perPacket;
+      this.#origin += drop;
     }
   }
 
+  // Time is measured from the first packet RECEIVED, not from sequence zero.
+  //
+  // The sequence counter is free-running: a headset that has been powered on a
+  // while is already at some arbitrary value, and it does not reset when a
+  // central connects. Anchoring on the absolute sequence would put every
+  // timestamp seq*perPacket/rate seconds into the future -- about 23 minutes at
+  // a sequence of 30000 -- so every window query would come back empty and the
+  // signal would look like a dead electrode rather than a clock bug.
+  //
+  // Only the DIFFERENCE between sequence numbers is meaningful, which is what
+  // the gap fill above already relies on.
   timeAt(i) {
-    return this.#t0 + (this.#first * this.#perPacket + i) / this.#rate;
+    return this.#t0 + (this.#origin + i) / this.#rate;
   }
 
   // Inclusive of t0, exclusive of t1.
   slice(t0, t1) {
     const t = [];
     const v = [];
-    if (this.#first === null) return { t, v };
+    if (!this.#started) return { t, v };
     for (let i = 0; i < this.#v.length; i++) {
       const ts = this.timeAt(i);
       if (ts < t0) continue;

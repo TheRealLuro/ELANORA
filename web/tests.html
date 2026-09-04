@@ -93,6 +93,50 @@ g("ringbuffer");
   dup.push(5, Array(12).fill(1));
   dup.push(5, Array(12).fill(9));
   check("a duplicate packet is ignored", dup.length === 12, `got ${dup.length}`);
+
+  // The bug every other test in this group missed, because they all start at
+  // sequence 0. A real headset's counter is free-running and does not reset
+  // when a central connects, so the first packet can be any value. Anchoring
+  // on the absolute sequence put timestamps ~23 minutes into the future at
+  // seq 30000, every window query came back empty, and four healthy
+  // electrodes read as flat.
+  const late = new Stream(256, 12);
+  const t0 = 1000;
+  late.anchor(t0);
+  late.push(30000, Array(12).fill(7));
+  late.push(30001, Array(12).fill(8));
+  const win = late.slice(t0, t0 + 1);
+  check("a stream starting at a high sequence is readable",
+        win.v.length === 24, `got ${win.v.length}`);
+  check("the first sample sits at the anchor, not seq/rate later",
+        near(win.t[0], t0, 1e-9), `got ${win.t[0]} want ${t0}`);
+  check("a high starting sequence still advances by 1/256",
+        near(win.t[1] - win.t[0], 1 / 256, 1e-12));
+
+  // Interleaved multi-axis data. The stream counts values, so an IMU reading
+  // of three axes needs 3x the rate as well as 3x the packet size. Given the
+  // reading rate instead, the three axes of one reading land 1/52 s apart and
+  // IMU time runs three times too slow -- and a breathing rate a third of its
+  // true value is low but not absurd, so it would pass a sanity check.
+  const imu = new Stream(52 * 3, 3 * 3);
+  imu.anchor(0);
+  imu.push(100, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  const iw = imu.slice(0, 1);
+  check("interleaved axes of one reading share a timestamp span",
+        near(iw.t[3] - iw.t[0], 1 / 52, 1e-12),
+        `got ${(iw.t[3] - iw.t[0]).toFixed(9)} want ${(1 / 52).toFixed(9)}`);
+  check("axes within a reading are 1/156 apart",
+        near(iw.t[1] - iw.t[0], 1 / 156, 1e-12));
+
+  // Trimming the window must not slide the survivors backwards in time.
+  const trim = new Stream(256, 12, 0.5);   // cap of 128 samples
+  trim.anchor(0);
+  for (let p = 900; p < 930; p++) trim.push(p, Array(12).fill(p));
+  const tw = trim.slice(0, 1e9);
+  check("trimming preserves the timebase",
+        tw.t.length > 1 && near(tw.t[1] - tw.t[0], 1 / 256, 1e-12));
+  check("trimmed timestamps keep moving forward",
+        tw.t[0] > 0, `got ${tw.t[0]}`);
 }
 
 // ------------------------------------------------------------------- dsp
