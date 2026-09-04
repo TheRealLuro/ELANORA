@@ -71,6 +71,30 @@ function tx(db, mode, fn) {
   });
 }
 
+// The write token, taken from the page URL once and kept.
+//
+// A page reached by scanning a QR carries "?k=..." and nothing else, so the
+// token is read from there and stored; later navigations within the app have
+// no query string but still need it. Stripping it from the visible URL keeps
+// it out of screenshots and shoulder-surfing.
+export function writeToken() {
+  const p = new URLSearchParams(location.search);
+  const k = p.get("k");
+  if (k) {
+    localStorage.setItem("elanora.token", k);
+    p.delete("k");
+    const rest = p.toString();
+    history.replaceState({}, "", location.pathname + (rest ? "?" + rest : ""));
+    return k;
+  }
+  return localStorage.getItem("elanora.token") || "";
+}
+
+export function authHeaders() {
+  const t = writeToken();
+  return t ? { "X-Elanora-Token": t } : {};
+}
+
 export class UploadQueue {
   #db = null;
   #busy = false;
@@ -105,7 +129,7 @@ export class UploadQueue {
       for (const rec of all) {
         const res = await fetch(`${this.base}/round`, {
           method: "POST",
-          headers: { "Content-Type": "text/plain" },
+          headers: { "Content-Type": "text/plain", ...authHeaders() },
           body: envelope(rec.meta, rec.sections),
         });
         if (res.ok) {
@@ -113,6 +137,13 @@ export class UploadQueue {
           continue;
         }
         const text = await res.text();
+        // A 401 means the token is missing or wrong. That is fixable by
+        // reloading from the QR, and the round must survive until it is -- so
+        // it stays queued and the loop stops rather than discarding data.
+        if (res.status === 401) {
+          this.onRejected?.(rec.trial_id, "write token rejected — reopen the app from the QR code");
+          throw new Error("unauthorized");
+        }
         // A 400 is the server refusing this specific round -- a bad header, a
         // duplicate. Retrying forever would block every round behind it, so
         // drop it from the queue and surface the reason instead.

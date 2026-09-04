@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <random>
 #include <string>
 
 #include "elanora/collector/session.hpp"
@@ -21,6 +22,35 @@
 #include "httplib.h"
 
 namespace {
+
+// A write token, because the intended deployment is a public tunnel.
+//
+// Reaching the phone requires HTTPS (Bluefy refuses plain HTTP outright), and
+// the cheapest trusted certificate is a tunnel with a public hostname. The URL
+// is unguessable, but "unguessable" is not "authenticated": anyone who learned
+// it could POST fabricated trials into the dataset. For a project whose entire
+// design rests on being able to trust the data, an injected round is a worse
+// outcome than a lost one.
+//
+// Reads stay open. Serving the page and the schedule to a stranger costs
+// nothing; writing to the dataset is what needs proving.
+std::string random_token() {
+    static const char* kHex = "0123456789abcdef";
+    std::random_device rd;
+    std::string out;
+    out.reserve(32);
+    for (int i = 0; i < 32; ++i) out += kHex[rd() % 16];
+    return out;
+}
+
+bool authorized(const httplib::Request& req, const std::string& token) {
+    if (token.empty()) return true;   // explicitly disabled with --no-token
+    // Header first; the query parameter exists because a page loaded from a
+    // scanned QR carries the token in its URL and nothing else.
+    if (req.get_header_value("X-Elanora-Token") == token) return true;
+    if (req.has_param("k") && req.get_param_value("k") == token) return true;
+    return false;
+}
 
 std::string local_addresses(int port) {
     // Printed at startup so the operator does not have to go and run ipconfig
@@ -49,11 +79,16 @@ int main(int argc, char** argv) {
     int port = 8080;
     std::string web = "web";
     std::string root = "data/datasets";
+    std::string token;
+    bool no_token = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--port") == 0 && i + 1 < argc) port = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--web") == 0 && i + 1 < argc) web = argv[++i];
         else if (std::strcmp(argv[i], "--root") == 0 && i + 1 < argc) root = argv[++i];
+        else if (std::strcmp(argv[i], "--token") == 0 && i + 1 < argc) token = argv[++i];
+        else if (std::strcmp(argv[i], "--no-token") == 0) no_token = true;
     }
+    if (!no_token && token.empty()) token = random_token();
 
     httplib::Server srv;
     if (!srv.set_mount_point("/", web)) {
@@ -107,7 +142,12 @@ int main(int argc, char** argv) {
         res.set_content(elanora::server::schedule_json(rounds), "application/json");
     });
 
-    srv.Post("/round", [&root](const httplib::Request& req, httplib::Response& res) {
+    srv.Post("/round", [&root, &token](const httplib::Request& req, httplib::Response& res) {
+        if (!authorized(req, token)) {
+            res.status = 401;
+            res.set_content("bad or missing write token", "text/plain");
+            return;
+        }
         elanora::server::RoundUpload r;
         std::string err;
         if (!elanora::server::parse_round(req.body, r, err) ||
@@ -124,7 +164,12 @@ int main(int argc, char** argv) {
         res.set_content("stored", "text/plain");
     });
 
-    srv.Post("/survey", [&root](const httplib::Request& req, httplib::Response& res) {
+    srv.Post("/survey", [&root, &token](const httplib::Request& req, httplib::Response& res) {
+        if (!authorized(req, token)) {
+            res.status = 401;
+            res.set_content("bad or missing write token", "text/plain");
+            return;
+        }
         std::string err;
         if (!elanora::server::store_survey(root, req.body, err)) {
             res.status = 400;
@@ -134,7 +179,12 @@ int main(int argc, char** argv) {
         res.set_content("stored", "text/plain");
     });
 
-    srv.Post("/session", [&root](const httplib::Request& req, httplib::Response& res) {
+    srv.Post("/session", [&root, &token](const httplib::Request& req, httplib::Response& res) {
+        if (!authorized(req, token)) {
+            res.status = 401;
+            res.set_content("bad or missing write token", "text/plain");
+            return;
+        }
         std::string err;
         if (!elanora::server::store_session(root, req.body, err)) {
             res.status = 400;

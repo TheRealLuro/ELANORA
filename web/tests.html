@@ -254,6 +254,54 @@ g("tone");
           .every((x, i) => x === jit[i]));
 }
 
+
+// -------------------------------------------------- tone <-> C++ conformance
+g("tone conformance");
+{
+  // The phone makes the sound now, so tone.js is a second implementation of
+  // the stimulus. "Sounds about right" is not good enough: the three
+  // conditions being RMS-matched IS the control, and a port that drifted would
+  // change the experiment without changing anything visible.
+  //
+  // Reference values come from collector/app/tone_reference_main.cpp, rendered
+  // by the same ToneGenerator the desktop collector plays through.
+  const ref = await (await fetch("./fixtures/tone_reference.json")).json();
+  const SR = ref.sample_rate;
+  const ctx = new OfflineAudioContext(1, ref.frames, SR);
+  const rms = (a) => {
+    let s = 0;
+    for (const x of a) s += x * x;
+    return Math.sqrt(s / a.length);
+  };
+
+  const cases = [
+    ["stim_10hz", { condition: "stim", hz: 10, seed: 1 }],
+    ["control_jitter_10hz", { condition: "control_jitter", jitterMeanHz: 10, seed: 7 }],
+    ["control_tone", { condition: "control_tone", seed: 1 }],
+  ];
+
+  for (const [name, opts] of cases) {
+    const buf = renderStimulus(ctx, { seconds: ref.frames / SR, ...opts })
+                  .getChannelData(0);
+    const want = ref[name];
+
+    // float32 round-trip through two languages, so an exact match is not the
+    // bar; 1e-6 is far tighter than any audible or physiological difference
+    // while still catching a real divergence in phase, envelope or scaling.
+    check(`${name} matches the C++ RMS`,
+          Math.abs(rms(buf) - want.rms) < 1e-6,
+          `js ${rms(buf).toFixed(9)} vs cpp ${want.rms.toFixed(9)}`);
+
+    let worst = 0, worstAt = -1;
+    for (let i = 0; i < ref.probes.length; i++) {
+      const d = Math.abs(buf[ref.probes[i]] - want.samples[i]);
+      if (d > worst) { worst = d; worstAt = ref.probes[i]; }
+    }
+    check(`${name} matches the C++ waveform`, worst < 1e-6,
+          `worst ${worst.toExponential(2)} at sample ${worstAt}`);
+  }
+}
+
 // ---------------------------------------------------------------- report
 const fails = results.filter((r) => !r.ok);
 let html = `<h2 class="${fails.length ? "f" : "p"}">` +

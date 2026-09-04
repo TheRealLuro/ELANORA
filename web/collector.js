@@ -17,7 +17,7 @@
 import { EEG_NAMES } from "./muse.js";
 import { Round } from "./protocol.js";
 import { renderStimulus } from "./tone.js";
-import { toCsv, UploadQueue } from "./upload.js";
+import { toCsv, UploadQueue, authHeaders } from "./upload.js";
 
 const SR_EEG = 256;
 const SR_PPG = 64;
@@ -129,7 +129,7 @@ export class Session {
     let body = "";
     for (const [k, v] of Object.entries(meta)) body += `${k}: ${v}\n`;
     try {
-      await fetch("/session", { method: "POST", body });
+      await fetch("/session", { method: "POST", headers: authHeaders(), body });
     } catch {
       // The session row can be reconstructed from the trial rows, so a failure
       // here must not stop a subject who is already wearing the headset.
@@ -300,7 +300,7 @@ export class Session {
     let body = "";
     for (const [k, v] of Object.entries(fields)) body += `${k}: ${v}\n`;
     try {
-      await fetch("/survey", { method: "POST", body });
+      await fetch("/survey", { method: "POST", headers: authHeaders(), body });
     } catch (e) {
       this.onError?.("survey not uploaded: " + e.message);
     }
