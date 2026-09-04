@@ -1,99 +1,145 @@
 # ELANORA
 
-Muse 2 physiological frequency response system: learn how audio stimulus
-frequencies change brain, heart and breathing activity (the **forward
-problem**), then invert it to find the frequency most likely to produce a
-desired physiological state (the **inverse problem**).
+Does audio stimulus frequency change brain, heart or breathing activity — and
+if so, which frequency produces a desired state?
 
-The design principle that governs everything else: **the system must be able to
-show that frequency does nothing.** Statistical evidence gates the optimizer
-rather than decorating it, and the optimizer is allowed to answer "no suitable
-frequency found."
+Records controlled Muse 2 EEG trials under isochronic audio, extracts
+physiological features, tests whether frequency predicts anything at all, then
+inverts the models to recommend a stimulus frequency.
 
-Full design and task breakdown: `C:\Users\Jdog1\.claude\plans\woolly-sleeping-moon.md`
+**The governing principle: the system must be able to show that frequency does
+nothing.** Statistical evidence gates the optimizer rather than decorating it,
+and the optimizer is allowed to answer "no suitable frequency found." An
+optimizer that always returns a frequency is worthless if frequency turns out
+not to predict anything.
 
-## Layout
+## How it fits together
+
+```
+  phone (Bluefy)                     PC
+  ┌──────────────┐            ┌──────────────────┐
+  │ web collector│ ── wifi ─> │ elanora_serve    │ ─> data/datasets/
+  └──────┬───────┘   HTTPS    └──────────────────┘         │
+         │ BLE                                             v
+      Muse 2                    elanora_data ─> elanora_models
+                               features +        train + recommend
+                               evidence gate
+```
+
+The phone runs the session because acquisition needs a Bluetooth radio. The PC
+stores the data and does the analysis.
 
 | Folder | Role |
 |---|---|
-| `common/` | Shared types, CSV layer, UI shell and theme |
-| `LSL/` | Muse 2 device I/O and streaming, plus `muse_monitor` diagnostics |
-| `collector/` | Stimulus generation and the trial runner app |
-| `data/` | Feature extraction, quality control, statistics, dataset builder |
-| `models/` | Ridge/GP models, validation, forward prediction, inverse optimizer |
+| `common/` | Shared types, CSV layer, UI shell |
+| `LSL/` | Muse 2 device I/O, `muse_monitor` diagnostics |
+| `collector/` | Stimulus generation, trial runner, protocol constants |
+| `data/` | Features, quality control, statistics, the evidence gate |
+| `models/` | Ridge/GP models, validation, forward and inverse |
+| `server/` | `elanora_serve` — hosts the phone app, receives recordings |
+| `web/` | The phone collector |
 
-Dependency order is `common <- LSL <- collector` and `common <- data <- models`.
-
-## Prerequisites
-
-A C++20 toolchain and CMake. On Windows:
-
-```powershell
-winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-winget install Kitware.CMake
-winget install Ninja-build.Ninja
-```
-
-## Building
-
-Quick toolchain check — seconds, fetches only Catch2:
-
-```bash
-cmake -B build -S . -DELANORA_BUILD_APPS=OFF -DELANORA_WITH_BRAINFLOW=OFF -DELANORA_WITH_EIGEN=OFF
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
-
-Full build, once the milestones needing them land:
+## Build and test
 
 ```bash
 cmake -B build -S .
 cmake --build build --config Release
+ctest --test-dir build -C Release        # 252 tests
 ```
 
-Binaries land in `build/bin/`.
+JavaScript tests run in a browser, not a test runner — start the server below
+and open `/tests.html` (73 tests, including a numerical conformance check
+between the browser and C++ tone generators).
 
-## Status
-
-Milestone 0 (foundation) is **complete and verified**: configured, compiled
-warning-free under `/W4`, and all 38 tests pass. The GUI stack is verified by
-`ui_smoke`, which opens a real window, renders through ImGui and ImPlot, and
-tears down cleanly.
-
-Verified toolchain: MSVC 19.44 (VS 2022 BuildTools), CMake 4.x, Windows SDK
-10.0.26100.
-
-| Milestone | State |
-|---|---|
-| 0 Foundation | **Verified** — build, tests, `ui_smoke` |
-| 1 Device layer | Tasks 4-6 **verified**; Task 7 app built, awaiting hardware check |
-| 2 Collector | Not started |
-| 3 Features | Not started |
-| 4 Evidence gate | Not started |
-| 5 Models | Not started |
-| 6 Optimizer | Not started |
-
-## Running the checks
+## Running a session
 
 ```bash
-cmake -B build -S .
-cmake --build build --config Debug
-ctest --test-dir build -C Debug --output-on-failure
-./build/bin/Debug/ui_smoke --frames 60
-./build/bin/Debug/muse_probe          # prints the Muse 2 channel map, no headset needed
-./build/bin/Debug/muse_monitor --synthetic --autoconnect --frames 180
-./build/bin/Debug/muse_monitor        # live view, needs a real Muse 2
+./build/bin/Release/elanora_serve --port 8080 --web web --root data/datasets
 ```
 
-### Verified hardware facts
+It prints a write token and the LAN URL. Then on the phone:
 
-`muse_probe` output, confirmed against BrainFlow 5.16.0:
+1. **iPhone needs [Bluefy](https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055)** —
+   Safari has no Web Bluetooth and never has. Android Chrome works natively.
+2. Open the URL with `?k=<token>` appended. The page stores the token and
+   strips it from the address bar.
+3. **Auto-Lock → Never.** A screen lock suspends Bluetooth and audio mid-round.
+4. Connect the headset, check all four electrodes read `good`, then Start.
 
-| Preset | Rate | Channels |
-|---|---|---|
-| DEFAULT (EEG) | 256 Hz | 4 — TP9, AF7, AF8, TP10 |
-| AUXILIARY (IMU) | 52 Hz | 3 accel + 3 gyro |
-| ANCILLARY (PPG) | 64 Hz | 3 — `[0]` red 660nm, `[1]` IR 940nm, `[2]` ambient |
+Web Bluetooth requires a secure context, so plain `http://` over a LAN may not
+work — Bluefy refuses it outright. For HTTPS without installing a certificate
+on the phone, tunnel it:
 
-The datasheet's "2-channel PPG" counts active wavelengths; BrainFlow also
-exposes the ambient reference channel.
+```bash
+cloudflared tunnel --url http://localhost:8080
+```
+
+Uploads then route through Cloudflare. Fine for testing on yourself; decide
+deliberately before collecting from other subjects.
+
+## Analysis
+
+```bash
+./build/bin/Release/elanora_data      # build features, run the evidence gate
+./build/bin/Release/elanora_models    # train, then invert
+```
+
+**Read the Evidence tab before trusting any recommendation.** If every outcome
+reads `NoEvidence`, that is a valid result: frequency did not measurably affect
+this subject pool under this protocol. The honest next step is a protocol
+change, not an optimizer.
+
+## The protocol
+
+18 rounds × 120 s ≈ 36 min per session. Each round is 30 s baseline / 30 s
+stimulus / 30 s post / 30 s rest.
+
+- **14 stimulus frequencies**, half-octave steps from 0.5 to 45 Hz
+- **2 jitter controls** — same pulse count, randomised intervals; isolates
+  *rhythmicity*
+- **2 tone controls** — unmodulated carrier; isolates *sound itself*
+
+All conditions are RMS-matched within 5%, and every stimulus rate is equally
+loud within 1%. That second one is not decoration: the edge-rounding filter
+removes more energy the more edges there are, so before it was corrected the
+45 Hz round was 17% quieter than the 0.5 Hz one — loudness covarying with the
+independent variable.
+
+**Two envelope shapes**, chosen per session:
+
+- **Rhythmic** — hard on/off. The envelope is a square wave, so a 10 Hz round
+  also drives 30 and 50 Hz.
+- **Wave** — sinusoidal. Energy at the rate and nowhere else.
+
+Only the wave condition can attribute a response to the rate itself, which is
+why both exist.
+
+## Constraints worth knowing
+
+- **Grouped validation only.** Leave-one-session-out and leave-one-subject-out.
+  Random row splits leak, because trials from one session share electrode
+  placement and baseline state.
+- **Absolute log-power is the default modeling target.** Relative band powers
+  sum to 1, so their deltas sum to zero by construction — "alpha up, beta down"
+  can be pure normalisation artifact. Both are stored; CLR fixes the geometry
+  of relative power but not the dependency.
+- **22 outcomes, so p-values are FDR-corrected.** At α=0.05 you expect one
+  false positive by chance, which would let the gate pass on noise.
+- **Quality is per-signal, never per-trial.** Clean EEG with unusable breathing
+  still trains the four brain models.
+- **Phone timestamps are reconstructed.** The Muse sends a sequence number and
+  no clock, so time comes from sequence differences anchored to the audio
+  clock. Dropped packets stay as NaN gaps, never bridged.
+
+## Expected results that are not bugs
+
+- Subject-level R² well below session-level. Frequency response is individual;
+  that gap is the real measure of whether this generalises.
+- Breathing confidence below 0.5 and excluded from training.
+- Gamma most contaminated by jaw tension — cross-read against motion energy.
+- The optimizer refusing to recommend. That is the design working.
+
+## Docs
+
+- `docs/superpowers/specs/` — design decisions and rationale
+- `docs/superpowers/plans/` — task breakdown
