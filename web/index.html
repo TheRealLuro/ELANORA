@@ -10,34 +10,162 @@
   <span id="status">not connected</span>
 </header>
 
-<div class="card">
-  <button id="connect">Connect headset</button>
-  <div id="err" class="err"></div>
-  <div class="hint" id="hint">
-    Switch the Muse on and close the Muse app first — the headset accepts one
-    connection at a time.
-  </div>
-</div>
+<nav class="tabs">
+  <button class="tab active" data-screen="monitor">Monitor</button>
+  <button class="tab" data-screen="collect">Collect</button>
+</nav>
 
-<div class="card">
-  <div class="eyebrow">Electrodes</div>
-  <table><tbody id="electrodes">
-    <tr><td class="name">TP9</td><td class="q">—</td><td class="num"></td><td class="num"></td></tr>
-    <tr><td class="name">AF7</td><td class="q">—</td><td class="num"></td><td class="num"></td></tr>
-    <tr><td class="name">AF8</td><td class="q">—</td><td class="num"></td><td class="num"></td></tr>
-    <tr><td class="name">TP10</td><td class="q">—</td><td class="num"></td><td class="num"></td></tr>
-  </tbody></table>
-  <div class="hint" id="drops"></div>
-</div>
-
-<div class="card">
-  <div class="eyebrow">Check before collecting</div>
-  <div class="hint">
-    All four should read <b class="good">good</b> at 3–50 µV once the headset
-    settles. Then close your eyes for ten seconds: alpha should rise on AF7 and
-    AF8. If it does not, the seating is wrong and no amount of analysis will
-    recover it.
+<!-- ------------------------------------------------------------- monitor -->
+<section id="screen-monitor">
+  <div class="card">
+    <button id="connect">Connect headset</button>
+    <div id="err" class="err"></div>
+    <div class="hint" id="hint">
+      Switch the Muse on and close the Muse app first — the headset accepts one
+      connection at a time.
+    </div>
   </div>
-</div>
+
+  <div class="card">
+    <div class="eyebrow">Electrodes</div>
+    <table><tbody id="electrodes">
+      <tr><td class="name">TP9</td><td class="q">—</td><td class="num"></td><td class="num"></td></tr>
+      <tr><td class="name">AF7</td><td class="q">—</td><td class="num"></td><td class="num"></td></tr>
+      <tr><td class="name">AF8</td><td class="q">—</td><td class="num"></td><td class="num"></td></tr>
+      <tr><td class="name">TP10</td><td class="q">—</td><td class="num"></td><td class="num"></td></tr>
+    </tbody></table>
+    <div class="hint" id="drops"></div>
+  </div>
+
+  <div class="card">
+    <div class="eyebrow">Check before collecting</div>
+    <div class="hint">
+      All four should read <b class="good">good</b> at 3–50 µV once the headset
+      settles. Then close your eyes for ten seconds: alpha should rise on AF7
+      and AF8. If it does not, the seating is wrong and no amount of analysis
+      will recover it.
+    </div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------- collect -->
+<section id="screen-collect" hidden>
+  <div class="card" id="setup">
+    <div class="eyebrow">New trial</div>
+
+    <label class="fld">Subject
+      <input id="subject" type="text" value="P01" autocapitalize="characters"
+             autocorrect="off" spellcheck="false">
+    </label>
+
+    <div class="kv"><span>Trial</span><b id="trial-id">S01</b></div>
+    <div class="kv"><span>Order seed</span>
+      <b id="seed-val">84120</b>
+      <button class="tiny" id="reseed">new</button>
+    </div>
+
+    <div class="protocol" id="protocol">18 rounds · 36 min · 120 s per round</div>
+
+    <button id="start" disabled>Connect the headset first</button>
+    <div class="hint">
+      Runs on its own. The survey opens after each round.
+    </div>
+    <div id="setup-err" class="err"></div>
+  </div>
+
+  <div class="card" id="preflight">
+    <div class="eyebrow">Before you start</div>
+    <ol class="steps">
+      <li><b>Auto-Lock off.</b> Settings → Display &amp; Brightness → Auto-Lock →
+          Never. A screen lock suspends Bluetooth and audio mid-round, and the
+          round is lost.</li>
+      <li><b>Headphones on</b>, volume set once and not touched again. Changing
+          it mid-session makes loudness differ between conditions.</li>
+      <li><b>Do Not Disturb on.</b> A notification sound lands in the middle of
+          a stimulus window.</li>
+    </ol>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------ running -->
+<section id="screen-run" hidden>
+  <div class="card run">
+    <div class="eyebrow" id="run-round">Round 1 of 18</div>
+    <div class="phase" id="run-phase">baseline</div>
+    <div class="count" id="run-count">30</div>
+    <div class="bar"><div class="fill" id="run-fill"></div></div>
+    <div class="hint" id="run-hint">Sit still. Eyes closed unless told otherwise.</div>
+    <button class="secondary" id="abort">Stop session</button>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Electrodes</div>
+    <table><tbody id="run-electrodes"></tbody></table>
+    <div class="hint" id="run-drops"></div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------- survey -->
+<section id="screen-survey" hidden>
+  <div class="card">
+    <div class="eyebrow" id="survey-round">After round 1</div>
+
+    <label class="sld">Relaxed <output id="o-relax">4</output>
+      <input type="range" id="s-relax" min="1" max="7" value="4"></label>
+    <label class="sld">Alert <output id="o-alert">4</output>
+      <input type="range" id="s-alert" min="1" max="7" value="4"></label>
+    <label class="sld">Pleasant <output id="o-pleas">4</output>
+      <input type="range" id="s-pleas" min="1" max="7" value="4"></label>
+    <label class="sld">Discomfort <output id="o-disc">0</output>
+      <input type="range" id="s-disc" min="0" max="3" value="0"></label>
+
+    <div class="grp">
+      <div class="lbl">Breathing felt</div>
+      <div class="seg" id="s-breath">
+        <button data-v="slower">slower</button>
+        <button data-v="same" class="on">same</button>
+        <button data-v="faster">faster</button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <!-- The manipulation check. If subjects report a steady rhythm on jitter
+           rounds as often as on stimulus rounds, the control is not working and
+           the jitter fraction needs raising. -->
+      <div class="lbl">Did you hear a steady rhythm?</div>
+      <div class="seg" id="s-rhythm">
+        <button data-v="clear">clear</button>
+        <button data-v="faint">faint</button>
+        <button data-v="none">none</button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <div class="lbl">Anything happen?</div>
+      <div class="chips" id="s-artifacts">
+        <button data-v="jaw">jaw clench</button>
+        <button data-v="moved">moved</button>
+        <button data-v="eyes">eyes open</button>
+        <button data-v="swallow">swallowed</button>
+        <button data-v="noise">outside noise</button>
+      </div>
+    </div>
+
+    <label class="fld">Note (optional)
+      <input id="s-note" type="text" placeholder="">
+    </label>
+
+    <button id="survey-submit" disabled>Answer the rhythm question</button>
+  </div>
+</section>
+
+<!-- ---------------------------------------------------------------- done -->
+<section id="screen-done" hidden>
+  <div class="card">
+    <div class="eyebrow">Session complete</div>
+    <div class="phase" id="done-count">18 rounds</div>
+    <div class="hint" id="done-hint"></div>
+    <button id="done-ok">Back</button>
+  </div>
+</section>
 
 <script type="module" src="./app.js"></script>

@@ -72,6 +72,16 @@ int main(int argc, char** argv) {
         res.set_header("Cache-Control", "no-store");
     });
 
+    // Every request, with the peer address. Without this a phone that cannot
+    // reach the machine at all and a phone that reaches it and then fails in
+    // the page look identical from the operator's side -- which is exactly the
+    // ambiguity that makes "it doesn't work" impossible to act on.
+    srv.set_logger([](const httplib::Request& req, const httplib::Response& res) {
+        std::printf("  %s  %s %s -> %d\n", req.remote_addr.c_str(),
+                    req.method.c_str(), req.path.c_str(), res.status);
+        std::fflush(stdout);
+    });
+
     srv.Get("/health", [](const httplib::Request&, httplib::Response& res) {
         res.set_content("ok", "text/plain");
     });
@@ -111,6 +121,26 @@ int main(int argc, char** argv) {
         }
         std::printf("stored %s (%s)\n", r.trial_id.c_str(), r.condition.c_str());
         std::fflush(stdout);
+        res.set_content("stored", "text/plain");
+    });
+
+    srv.Post("/survey", [&root](const httplib::Request& req, httplib::Response& res) {
+        std::string err;
+        if (!elanora::server::store_survey(root, req.body, err)) {
+            res.status = 400;
+            res.set_content(err, "text/plain");
+            return;
+        }
+        res.set_content("stored", "text/plain");
+    });
+
+    srv.Post("/session", [&root](const httplib::Request& req, httplib::Response& res) {
+        std::string err;
+        if (!elanora::server::store_session(root, req.body, err)) {
+            res.status = 400;
+            res.set_content(err, "text/plain");
+            return;
+        }
         res.set_content("stored", "text/plain");
     });
 

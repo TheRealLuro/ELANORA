@@ -2,6 +2,7 @@
 
 #include <cctype>
 #include <fstream>
+#include <map>
 #include <stdexcept>
 
 #include "elanora/collector/schema.hpp"
@@ -307,6 +308,71 @@ bool parse_round(const std::string& body, RoundUpload& out, std::string& err) {
         return false;
     }
     return true;
+}
+
+
+// ---------------------------------------------------------------------------
+// Surveys and session headers
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The header block of the same envelope, as a map. Shared with parse_round so
+// there is one definition of what a header line looks like.
+std::map<std::string, std::string> parse_headers(const std::string& body) {
+    std::map<std::string, std::string> out;
+    std::size_t pos = 0;
+    while (pos < body.size()) {
+        std::size_t nl = body.find('\n', pos);
+        if (nl == std::string::npos) nl = body.size();
+        std::string line = body.substr(pos, nl - pos);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        pos = nl + 1;
+        if (line.empty()) break;
+        const std::size_t colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        std::string val = line.substr(colon + 1);
+        while (!val.empty() && val.front() == ' ') val.erase(val.begin());
+        out[line.substr(0, colon)] = val;
+    }
+    return out;
+}
+
+// Builds a row in the declared column order. A field the phone did not send
+// becomes an empty cell rather than being skipped: a row with the wrong number
+// of columns misaligns every value after the gap, and still parses.
+bool store_keyed(const fs::path& root, const std::string& file,
+                 const std::vector<std::string>& header, const std::string& body,
+                 const char* id_field, std::string& err) {
+    err.clear();
+    const auto fields = parse_headers(body);
+
+    const auto it = fields.find(id_field);
+    if (it == fields.end() || it->second.empty()) {
+        err = std::string("missing ") + id_field;
+        return false;
+    }
+    if (!safe_id(it->second, id_field, err)) return false;
+
+    std::vector<std::string> row;
+    row.reserve(header.size());
+    for (const std::string& col : header) {
+        const auto f = fields.find(col);
+        row.push_back(f == fields.end() ? std::string() : f->second);
+    }
+    return append_row(root / file, header, row, err);
+}
+
+}  // namespace
+
+bool store_survey(const fs::path& root, const std::string& body, std::string& err) {
+    return store_keyed(root, "surveys.csv", collector::kSurveysHeader, body,
+                       "trial_id", err);
+}
+
+bool store_session(const fs::path& root, const std::string& body, std::string& err) {
+    return store_keyed(root, "sessions.csv", collector::kSessionsHeader, body,
+                       "session_id", err);
 }
 
 }  // namespace elanora::server

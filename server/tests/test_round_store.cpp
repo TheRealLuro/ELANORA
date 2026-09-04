@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -235,4 +236,77 @@ TEST_CASE("the suspect flag round-trips", "[server][wire]") {
     std::string err;
     REQUIRE(parse_round(envelope(h, "", ""), r, err));
     REQUIRE(r.suspect);
+}
+
+// ---------------------------------------------------------------------------
+// Surveys and session headers
+// ---------------------------------------------------------------------------
+
+TEST_CASE("a survey row lands in the declared column order", "[server][survey]") {
+    TempDir tmp;
+    // Deliberately out of order, and missing one field, because the phone
+    // builds this map and JS object order is not a guarantee worth relying on.
+    const std::string body =
+        "heard_rhythm: clear\n"
+        "trial_id: P01_S01_R01\n"
+        "relaxation: 5\n"
+        "session_id: P01_S01\n"
+        "subject_id: P01\n"
+        "round_index: 1\n"
+        "note: felt calm\n";
+    std::string err;
+    REQUIRE(store_survey(tmp.path, body, err));
+
+    const std::string csv = read_all(tmp.path / "surveys.csv");
+    REQUIRE(csv.find("trial_id,session_id,subject_id,round_index,relaxation") == 0);
+    // trial_id first, then session, subject, index, relaxation -- schema order,
+    // not the order the fields arrived in.
+    REQUIRE(csv.find("P01_S01_R01,P01_S01,P01,1,5,") != std::string::npos);
+}
+
+TEST_CASE("an absent survey field becomes an empty cell, not a dropped column",
+          "[server][survey]") {
+    // A row with the wrong number of columns misaligns every value after the
+    // gap and still parses, which is the worst kind of failure here.
+    TempDir tmp;
+    std::string err;
+    REQUIRE(store_survey(tmp.path, "trial_id: T\nrelaxation: 5\n", err));
+
+    const std::string csv = read_all(tmp.path / "surveys.csv");
+    const std::size_t nl = csv.find('\n');
+    const std::string header = csv.substr(0, nl);
+    const std::string row = csv.substr(nl + 1);
+
+    const auto commas = [](const std::string& s) {
+        return std::count(s.begin(), s.end(), ',');
+    };
+    REQUIRE(commas(row.substr(0, row.find('\n'))) == commas(header));
+}
+
+TEST_CASE("an uncounted breath total stays blank rather than becoming zero",
+          "[server][survey]") {
+    // Zero breaths in ninety seconds is a number, and a downstream mean would
+    // happily average it in.
+    TempDir tmp;
+    std::string err;
+    REQUIRE(store_survey(tmp.path, "trial_id: T\nbreaths_self_count: \n", err));
+    REQUIRE(read_all(tmp.path / "surveys.csv").find(",0,") == std::string::npos);
+}
+
+TEST_CASE("a survey without a trial id is refused", "[server][survey]") {
+    TempDir tmp;
+    std::string err;
+    REQUIRE_FALSE(store_survey(tmp.path, "relaxation: 5\n", err));
+    REQUIRE(err.find("trial_id") != std::string::npos);
+}
+
+TEST_CASE("session rows append in schema order", "[server][survey]") {
+    TempDir tmp;
+    std::string err;
+    REQUIRE(store_session(tmp.path,
+        "session_id: P01_S01\nsubject_id: P01\ntrial_number: 1\n"
+        "stim_mode: sweep\norder_seed: 84120\nround_count: 18\n", err));
+    const std::string csv = read_all(tmp.path / "sessions.csv");
+    REQUIRE(csv.find("session_id,subject_id,trial_number,date,stim_mode") == 0);
+    REQUIRE(csv.find("P01_S01,P01,1,") != std::string::npos);
 }

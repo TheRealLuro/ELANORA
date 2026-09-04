@@ -45,4 +45,16 @@ bool parse_round(const std::string& body, RoundUpload& out, std::string& err);
 bool store_round(const std::filesystem::path& root, const RoundUpload& r,
                  std::string& err);
 
+// Surveys and the session header use the same "key: value" envelope but carry
+// no payload sections, so they take the field map directly.
+//
+// The column order comes from schema.hpp; a missing field is written as an
+// empty cell rather than being dropped, because a row with the wrong number of
+// columns silently misaligns every value after the gap.
+bool store_survey(const std::filesystem::path& root, const std::string& body,
+                  std::string& err);
+
+bool store_session(const std::filesystem::path& root, const std::string& body,
+                   std::string& err);
+
 }  // namespace elanora::server
