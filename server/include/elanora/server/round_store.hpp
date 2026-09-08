@@ -34,6 +34,11 @@ struct RoundUpload {
     // round. Kept rather than discarded -- a partial round is evidence about
     // the session, and silently dropping it would hide a systematic problem.
     bool suspect = false;
+
+    // Headset telemetry at the moment the round ended. Empty when the headset
+    // did not report any, which is normal on a board without telemetry.
+    std::string battery_pct;
+    std::string temperature_c;
 };
 
 // Reads the JSON envelope the phone posts. Returns false with a reason rather

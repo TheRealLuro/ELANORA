@@ -10,6 +10,7 @@ import {
   decodeEeg, decodePpg, decodeImu,
   ACCEL_SCALE, GYRO_SCALE,
   EEG_PER_PACKET, PPG_PER_PACKET, IMU_PER_PACKET,
+  decodeTelemetry,
 } from "./decode.js";
 import { Stream } from "./ringbuffer.js";
 import {
@@ -71,6 +72,11 @@ muse.onRaw((name, dv) => {
     } else if (name === "accel" || name === "gyro") {
       const { seq, samples } = decodeImu(dv, name === "accel" ? ACCEL_SCALE : GYRO_SCALE);
       streams[name].push(seq, samples.flat());
+    } else if (name === "telemetry") {
+      // Kept as the latest reading rather than a stream: it arrives about once
+      // a second and what matters is its value at each round boundary, not a
+      // waveform.
+      session.telemetry = decodeTelemetry(dv);
     }
   } catch {
     // A malformed packet is dropped rather than allowed to throw out of a
@@ -236,14 +242,49 @@ el("subject").oninput = () => {
   session.subject = el("subject").value.trim() || "P01";
 };
 
-session.fetchSchedule().then((rounds) => {
-  const mins = Math.round(rounds.length * 120 / 60);
-  el("protocol").textContent =
-    `${rounds.length} rounds · ${mins} min · 120 s per round`;
-}).catch(() => {
-  el("protocol").textContent = "server unreachable — using the cached schedule";
-  session.loadCachedSchedule();
-});
+// Coverage and which bank of it this session runs.
+function paintBanks() {
+  const row = el("bank-row");
+  row.hidden = session.banks < 2;
+  if (row.hidden) { session.bank = 0; return; }
+  el("s-bank").innerHTML = Array.from({ length: session.banks }, (_, i) =>
+    `<button data-b="${i}"${i === session.bank ? ' class="on"' : ""}>${i + 1}</button>`
+  ).join("");
+  for (const b of el("s-bank").querySelectorAll("button")) {
+    b.onclick = () => {
+      session.bank = Number(b.dataset.b);
+      paintBanks();
+      refreshSchedule();
+    };
+  }
+}
+
+for (const b of el("s-coverage").querySelectorAll("button")) {
+  b.onclick = () => {
+    for (const o of el("s-coverage").querySelectorAll("button")) o.classList.remove("on");
+    b.classList.add("on");
+    session.freqCount = Number(b.dataset.c);
+    session.banks = Number(b.dataset.b);
+    session.bank = 0;
+    paintBanks();
+    refreshSchedule();
+  };
+}
+
+function refreshSchedule() {
+  return session.fetchSchedule().then((rounds) => {
+    const mins = Math.round(rounds.length * 120 / 60);
+    const of = session.banks > 1
+      ? ` · session ${session.bank + 1} of ${session.banks}` : "";
+    el("protocol").textContent =
+      `${rounds.length} rounds · ${mins} min${of}`;
+  }).catch(() => {
+    el("protocol").textContent = "server unreachable — using the cached schedule";
+    session.loadCachedSchedule();
+  });
+}
+paintBanks();
+refreshSchedule();
 
 // iOS releases the wake lock whenever the page is hidden, so it is re-acquired
 // on every return to visibility. It is best-effort: the Auto-Lock instruction

@@ -136,8 +136,14 @@ int main(int argc, char** argv) {
         const int count = num("count", kProtocolFreqCount);
         const int jitter = num("jitter", kProtocolJitter);
         const int tone = num("tone", kProtocolTone);
+        // Coverage across sessions rather than session length: bank b of n
+        // takes every nth frequency, so each session stays near 18 rounds
+        // while n sessions together cover the full set.
+        const int banks = num("banks", 1);
+        const int bank = num("bank", 0);
 
-        const auto freqs = geometric_set(kProtocolFreqLo, kProtocolFreqHi, count);
+        const auto all = geometric_set(kProtocolFreqLo, kProtocolFreqHi, count);
+        const auto freqs = frequency_bank(all, bank, banks);
         const auto rounds = build_schedule(freqs, jitter, tone, seed);
         res.set_content(elanora::server::schedule_json(rounds), "application/json");
     });

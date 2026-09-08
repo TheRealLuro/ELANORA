@@ -593,12 +593,27 @@ void draw_collector(CollectorState& st,
             // pressed start and was told no. Seating a headset is the one task
             // here that takes real fiddling, so show the thing being gated on
             // while it can still be fixed.
+            // No live device means the quality figures below describe
+            // whatever is filling the buffer -- in demo mode, synthesised
+            // signal. Saying so is the difference between a pre-flight check
+            // and a decoration.
+            const bool live = (stream != nullptr && channels != nullptr);
+
             ImGui::Dummy(ImVec2(1, theme::kS5));
             ImGui::TextColored(v4(theme::kMuted), "Electrodes");
+            ImGui::SameLine();
+            right_align(120.0f);
+            if (!live) ImGui::TextColored(v4(theme::kWarn), "no headset");
+            else ImGui::TextColored(v4(theme::kFaint), "live");
             ImGui::Dummy(ImVec2(1, 6));
             for (int i = 0; i < kSensorCount; ++i) {
                 const lsl::ChannelQuality& cq = qual[static_cast<std::size_t>(i)];
-                const theme::Rgba c = cq.q == lsl::Quality::Good   ? theme::kGood
+                // Without a headset these figures describe whatever is in the
+                // buffer, which in demo mode is synthesised signal. Four green
+                // dots and plausible microvolts would be a pre-flight check
+                // that passes on data no electrode produced.
+                const theme::Rgba c = !live ? theme::kFaint
+                                    : cq.q == lsl::Quality::Good   ? theme::kGood
                                     : cq.q == lsl::Quality::Fair   ? theme::kWarn
                                                                    : theme::kBad;
                 const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -614,7 +629,8 @@ void draw_collector(CollectorState& st,
                 if (fonts().mono) ImGui::PushFont(fonts().mono);
                 // The reason, not just the verdict: "flat" and "railed" call
                 // for opposite fixes -- reseat versus wait for settling.
-                if (cq.flat)        ImGui::TextColored(v4(c), "flat");
+                if (!live)          ImGui::TextColored(v4(c), "--");
+                else if (cq.flat)   ImGui::TextColored(v4(c), "flat");
                 else if (cq.railed) ImGui::TextColored(v4(c), "railed");
                 else                ImGui::TextColored(v4(c), "%.0f uV", cq.rms_uv);
                 if (fonts().mono) ImGui::PopFont();
@@ -657,8 +673,9 @@ void draw_collector(CollectorState& st,
                 ImGui::Dummy(ImVec2(1, theme::kS1));
             }
 
-            ImGui::BeginDisabled(!electrodes_ok);
-            if (ImGui::Button("Start trial", ImVec2(-1.0f, 56.0f))) {
+            ImGui::BeginDisabled(!electrodes_ok || !live);
+            if (ImGui::Button(live ? "Start trial" : "Connect a headset to record",
+                              ImVec2(-1.0f, 56.0f))) {
                 st.io_status.clear();
                 st.started_with_bad_electrodes = (n_bad > 0);
 

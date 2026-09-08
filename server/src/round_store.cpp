@@ -169,7 +169,8 @@ bool store_round(const fs::path& root, const RoundUpload& r, std::string& err) {
                        fmt6(r.frequency_hz), fmt6(r.jitter_mean_hz), started,
                        std::to_string(data_rows(r.eeg_csv)),
                        std::to_string(data_rows(r.ppg_csv)),
-                       std::to_string(data_rows(r.imu_csv))},
+                       std::to_string(data_rows(r.imu_csv)),
+                       r.suspect ? "1" : "0", r.battery_pct, r.temperature_c},
                       err);
 }
 
@@ -293,6 +294,8 @@ bool parse_round(const std::string& body, RoundUpload& out, std::string& err) {
         else if (key == "frequency_hz")   out.frequency_hz = to_double(val);
         else if (key == "jitter_mean_hz") out.jitter_mean_hz = to_double(val);
         else if (key == "suspect")        out.suspect = (val == "1" || val == "true");
+        else if (key == "battery_pct")    out.battery_pct = val;
+        else if (key == "temperature_c")  out.temperature_c = val;
         // An unknown header is ignored rather than rejected, so a newer phone
         // can add a field without breaking an older server.
     }

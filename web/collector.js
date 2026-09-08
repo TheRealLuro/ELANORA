@@ -43,6 +43,14 @@ export class Session {
     this.ageBand = "";
     // "gated" (isochronic) or "wave" (sinusoidal AM).
     this.envelope = "gated";
+    // Frequency coverage. banks=1 is the standard 14-point half-octave sweep;
+    // banks=2 gives quarter-octave over two sessions, banks=4 eighth-octave
+    // over four, with every session staying near 36 minutes.
+    this.freqCount = 14;
+    this.banks = 1;
+    this.bank = 0;
+    // Latest telemetry reading, set by the BLE handler.
+    this.telemetry = null;
     this.trialNumber = 1;
     this.seed = 84120;
     this.durations = { baseline: 30, stimulus: 30, post: 30, rest: 30 };
@@ -62,7 +70,8 @@ export class Session {
   #now() { return performance.now() / 1000; }
 
   async fetchSchedule() {
-    const url = `/schedule?seed=${this.seed}`;
+    const url = `/schedule?seed=${this.seed}` +
+                `&count=${this.freqCount}&banks=${this.banks}&bank=${this.bank}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`schedule: ${res.status}`);
     const json = await res.json();
@@ -142,7 +151,9 @@ export class Session {
       // Recorded so the analysis can tell the two envelope shapes apart. It
       // rides in stim_mode rather than a new column, so nothing downstream has
       // to change to read a dataset that mixes them.
-      stim_mode: `sweep_${this.envelope}`,
+      // Envelope shape and which coverage bank this session ran, so the
+      // analysis can tell sessions apart without guessing from the frequencies.
+      stim_mode: `sweep_${this.envelope}_b${this.bank + 1}of${this.banks}`,
       carrier_hz: (440).toFixed(6),
       duty_cycle: (0.5).toFixed(6),
       baseline_s: this.durations.baseline.toFixed(6),
@@ -293,6 +304,11 @@ export class Session {
       frequency_hz: Number(spec.frequency_hz).toFixed(6),
       jitter_mean_hz: Number(spec.jitter_mean_hz).toFixed(6),
       suspect: this.suspect ? "1" : "0",
+      // Recorded per round, not per session: battery falls measurably over 36
+      // minutes, and a supply rail that moved during a session is something
+      // the analysis should be able to see rather than infer.
+      battery_pct: this.telemetry ? this.telemetry.batteryPct.toFixed(1) : "",
+      temperature_c: this.telemetry ? this.telemetry.temperatureC : "",
     };
 
     await this.#queue.enqueue(meta, {

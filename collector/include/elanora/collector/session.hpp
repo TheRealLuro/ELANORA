@@ -110,6 +110,23 @@ inline constexpr int    kProtocolRounds =
 // starve the bottom.
 std::vector<double> geometric_set(double lo, double hi, int count);
 
+// Interleaved frequency coverage across sessions.
+//
+// Quarter-octave spacing over 0.5-45 Hz is 27 frequencies, which is 31 rounds
+// and 62 minutes -- too long for one sitting, and a fatigued subject in round
+// 28 produces worse data than no data at all.
+//
+// So resolution comes from sessions rather than from session length. Bank b of
+// n takes every nth frequency starting at index b, which keeps each session
+// near 18 rounds while n sessions together cover the full set. Interleaving
+// rather than splitting the range in half matters: every bank still spans 0.5
+// to 45 Hz, so a session-level shift -- different electrode placement, a
+// different time of day, a worse night's sleep -- lands on the whole range
+// instead of concentrating on one end and masquerading as a frequency effect.
+//
+// bank >= banks, or banks < 1, returns everything.
+std::vector<double> frequency_bank(const std::vector<double>& all, int bank, int banks);
+
 // Builds the round order for one trial.
 //
 // Randomised from a stored seed, under two constraints: no control round may

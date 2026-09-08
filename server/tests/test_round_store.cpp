@@ -138,7 +138,9 @@ TEST_CASE("the trials row records the rows that actually landed",
 
     const std::string trials = read_all(tmp.path / "trials.csv");
     // n_eeg is counted from the payload, not taken on trust from the phone.
-    REQUIRE(trials.find(",3,1,1\n") != std::string::npos);
+    // Not anchored to the end of the row, so adding a column later does not
+    // break an assertion that is about the counts.
+    REQUIRE(trials.find(",3,1,1,") != std::string::npos);
 }
 
 TEST_CASE("started_at comes from the first marker", "[server][store]") {
@@ -309,4 +311,42 @@ TEST_CASE("session rows append in schema order", "[server][survey]") {
     const std::string csv = read_all(tmp.path / "sessions.csv");
     REQUIRE(csv.find("session_id,subject_id,trial_number,date,stim_mode") == 0);
     REQUIRE(csv.find("P01_S01,P01,1,") != std::string::npos);
+}
+
+TEST_CASE("a suspect round is recorded as suspect", "[server][store]") {
+    // The phone sets this when a round lost real time to a suspended tab or a
+    // Bluetooth dropout. Before the column existed the flag was parsed and
+    // then dropped, so such a round entered the dataset indistinguishable from
+    // a clean one -- a partial recording that looks whole is worse than a
+    // missing one, because nothing downstream has any reason to doubt it.
+    TempDir tmp;
+    RoundUpload r = sample_round();
+    r.suspect = true;
+    r.battery_pct = "87.4";
+    r.temperature_c = "31";
+    std::string err;
+    REQUIRE(store_round(tmp.path, r, err));
+
+    const std::string csv = read_all(tmp.path / "trials.csv");
+    REQUIRE(csv.find("suspect,battery_pct,temperature_c") != std::string::npos);
+    REQUIRE(csv.find(",1,87.4,31\n") != std::string::npos);
+}
+
+TEST_CASE("a clean round is not marked suspect", "[server][store]") {
+    TempDir tmp;
+    const RoundUpload r = sample_round();
+    std::string err;
+    REQUIRE(store_round(tmp.path, r, err));
+    // Trailing empties are the honest answer when the headset reported no
+    // telemetry, rather than a fabricated zero battery.
+    REQUIRE(read_all(tmp.path / "trials.csv").find(",0,,\n") != std::string::npos);
+}
+
+TEST_CASE("telemetry survives the wire format", "[server][wire]") {
+    std::string h = std::string(kHeaders) + "battery_pct: 92.5\ntemperature_c: 29\n";
+    RoundUpload r;
+    std::string err;
+    REQUIRE(parse_round(envelope(h, "", ""), r, err));
+    REQUIRE(r.battery_pct == "92.5");
+    REQUIRE(r.temperature_c == "29");
 }

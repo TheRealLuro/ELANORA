@@ -99,6 +99,25 @@
       </div>
     </div>
 
+    <div class="grp">
+      <div class="lbl">Frequency coverage</div>
+      <div class="seg" id="s-coverage">
+        <button data-c="14" data-b="1" class="on">Half-octave</button>
+        <button data-c="27" data-b="2">Quarter</button>
+        <button data-c="53" data-b="4">Eighth</button>
+      </div>
+      <div class="hint">
+        Finer coverage comes from more sessions, not longer ones: each session
+        stays near 36 minutes and takes every Nth frequency, so together they
+        cover the full set. Every session still spans 0.5–45 Hz.
+      </div>
+    </div>
+
+    <div class="grp" id="bank-row" hidden>
+      <div class="lbl">Which session of the set</div>
+      <div class="seg" id="s-bank"></div>
+    </div>
+
     <div class="protocol" id="protocol">18 rounds · 36 min · 120 s per round</div>
 
     <button id="start" disabled>Connect the headset first</button>

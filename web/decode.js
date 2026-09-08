@@ -73,3 +73,22 @@ export function unwrap(prev, seq) {
   if (out > prev + 32768) out -= 65536;
   return out;
 }
+
+// Battery and temperature.
+//
+// The headset sends this unprompted roughly once a second and it was being
+// discarded. It matters over a 36-minute session: a headset that starts at
+// 100% and ends at 20% has a changing supply rail, and knowing that is the
+// difference between explaining a drift and guessing at it.
+//
+// 16-bit big-endian fields after the sequence: battery in hundredths of a
+// percent, fuel gauge in 2.2 uV units, ADC millivolts, temperature in Celsius.
+export function decodeTelemetry(dv) {
+  return {
+    seq: dv.getUint16(0, false),
+    batteryPct: dv.getUint16(2, false) / 512,
+    fuelGaugeUv: dv.getUint16(4, false) * 2.2,
+    adcMv: dv.getUint16(6, false),
+    temperatureC: dv.getUint16(8, false),
+  };
+}

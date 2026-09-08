@@ -62,6 +62,16 @@ std::vector<double> geometric_set(double lo, double hi, int count) {
     return out;
 }
 
+std::vector<double> frequency_bank(const std::vector<double>& all, int bank, int banks) {
+    if (banks < 2 || bank < 0 || bank >= banks) return all;
+    std::vector<double> out;
+    for (std::size_t i = static_cast<std::size_t>(bank); i < all.size();
+         i += static_cast<std::size_t>(banks)) {
+        out.push_back(all[i]);
+    }
+    return out;
+}
+
 std::vector<PlannedRound> build_schedule(const std::vector<double>& freqs,
                                          int n_jitter, int n_tone, uint64_t seed) {
     std::vector<PlannedRound> list;

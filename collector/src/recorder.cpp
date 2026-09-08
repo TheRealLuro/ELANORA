@@ -182,7 +182,11 @@ bool TrialRecorder::write_round(int round_index, const PlannedRound& round,
                      fmt6(round.hz), fmt6(round.jitter_mean_hz),
                      markers.empty() ? "" : fmt6(markers.front().ts),
                      std::to_string(eeg.size()), std::to_string(ppg.size()),
-                     std::to_string(imu.size())},
+                     std::to_string(imu.size()),
+                     // The desktop path has no suspend to detect and does not
+                     // read telemetry, so these are honestly empty rather than
+                     // fabricated zeroes.
+                     "0", "", ""},
                     err)) {
         return false;
     }

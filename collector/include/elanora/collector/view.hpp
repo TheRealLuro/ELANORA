@@ -78,8 +78,13 @@ struct CollectorState {
 // Draws the whole tab and advances the trial clock. `qual` is the live
 // electrode state, shown during a run so a headset problem is caught in the
 // round it happens rather than at analysis.
-// `stream` and `channels` supply the raw samples written to disk; pass nullptr
-// when no device is connected and the trial runs as a silent rehearsal.
+// `stream` and `channels` supply the raw samples written to disk. Passing
+// nullptr for either disables starting a trial outright, rather than running a
+// silent rehearsal: begin_trial() creates the session directory and the
+// sessions.csv row regardless, so a rehearsal left behind a session full of
+// empty rounds that is indistinguishable afterwards from a real one that
+// failed. In demo mode the electrode figures also describe synthesised signal,
+// so the pre-flight check would pass on data that is not from a headset.
 void draw_collector(CollectorState& st,
                     const std::array<lsl::ChannelQuality, kSensorCount>& qual,
                     lsl::StreamRecorder* stream,

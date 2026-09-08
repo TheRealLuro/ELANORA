@@ -24,9 +24,17 @@ inline const std::vector<std::string> kSessionsHeader = {
     "carrier_hz", "duty_cycle", "baseline_s", "stimulus_s", "post_s", "rest_s",
     "order_seed", "round_count", "quality_override"};
 
+// suspect, battery_pct and temperature_c are at the end so a reader that
+// splits on the first eleven columns still works on older files.
+//
+// suspect is load-bearing rather than informational: the phone sets it when a
+// round lost real time to a suspended tab or a Bluetooth dropout. Without the
+// column, such a round lands in the dataset indistinguishable from a clean
+// one, and a partial recording that looks whole is worse than a missing one.
 inline const std::vector<std::string> kTrialsHeader = {
     "trial_id", "session_id", "subject_id", "round_index", "condition",
-    "frequency_hz", "jitter_mean_hz", "started_at", "n_eeg", "n_ppg", "n_imu"};
+    "frequency_hz", "jitter_mean_hz", "started_at", "n_eeg", "n_ppg", "n_imu",
+    "suspect", "battery_pct", "temperature_c"};
 
 inline const std::vector<std::string> kSurveysHeader = {
     "trial_id", "session_id", "subject_id", "round_index", "relaxation", "alertness",

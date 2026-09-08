@@ -288,3 +288,57 @@ TEST_CASE("14 points from 0.5 to 45 Hz are half-octave steps", "[session][protoc
     REQUIRE(build_schedule(f, kProtocolJitter, kProtocolTone, 84120).size()
             == static_cast<std::size_t>(kProtocolRounds));
 }
+
+TEST_CASE("frequency banks interleave rather than split the range",
+          "[session][coverage]") {
+    // Resolution comes from sessions, not session length: quarter-octave
+    // spacing is 27 frequencies, which would be a 62-minute sitting.
+    const auto all = geometric_set(kProtocolFreqLo, kProtocolFreqHi, 27);
+    REQUIRE(all.size() == 27);
+
+    const auto a = frequency_bank(all, 0, 2);
+    const auto b = frequency_bank(all, 1, 2);
+
+    // Together they are the whole set, with nothing repeated and nothing lost.
+    REQUIRE(a.size() + b.size() == all.size());
+    std::vector<double> merged = a;
+    merged.insert(merged.end(), b.begin(), b.end());
+    std::sort(merged.begin(), merged.end());
+    std::vector<double> sorted_all = all;
+    std::sort(sorted_all.begin(), sorted_all.end());
+    REQUIRE(merged == sorted_all);
+
+    // Each bank still spans the full range. This is the point of interleaving:
+    // if bank A were the bottom half and bank B the top, then any difference
+    // between the two sessions -- placement, sleep, time of day -- would look
+    // exactly like a frequency effect.
+    REQUIRE(a.front() == Catch::Approx(all.front()));
+    REQUIRE(a.back() == Catch::Approx(all[26]));
+    REQUIRE(b.front() == Catch::Approx(all[1]));
+    REQUIRE(b.back() == Catch::Approx(all[25]));
+
+    // A bank is close to the standard session length, so the 36-minute budget
+    // holds whichever coverage is chosen.
+    REQUIRE(a.size() + kProtocolJitter + kProtocolTone <= 18);
+    REQUIRE(b.size() + kProtocolJitter + kProtocolTone <= 18);
+}
+
+TEST_CASE("a single bank is the whole set", "[session][coverage]") {
+    const auto all = geometric_set(kProtocolFreqLo, kProtocolFreqHi, 14);
+    REQUIRE(frequency_bank(all, 0, 1) == all);
+    REQUIRE(frequency_bank(all, 0, 0) == all);
+    // Out of range is the whole set rather than empty: a schedule with no
+    // stimulus rounds is a silently wasted session.
+    REQUIRE(frequency_bank(all, 5, 2) == all);
+}
+
+TEST_CASE("four banks reach eighth-octave resolution inside the budget",
+          "[session][coverage]") {
+    const auto all = geometric_set(kProtocolFreqLo, kProtocolFreqHi, 53);
+    for (int b = 0; b < 4; ++b) {
+        const auto bank = frequency_bank(all, b, 4);
+        REQUIRE(bank.size() + kProtocolJitter + kProtocolTone <= 18);
+        REQUIRE(bank.front() <= all[3]);
+        REQUIRE(bank.back() >= all[49]);
+    }
+}
