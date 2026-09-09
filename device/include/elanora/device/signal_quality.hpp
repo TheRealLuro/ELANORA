@@ -11,7 +11,7 @@
 
 #include <vector>
 
-namespace elanora::lsl {
+namespace elanora::device {
 
 enum class Quality { Good, Fair, Bad };
 
@@ -38,4 +38,4 @@ ChannelQuality assess(const std::vector<double>& eeg_window, int sampling_rate);
 
 const char* quality_name(Quality q);
 
-}  // namespace elanora::lsl
+}  // namespace elanora::device

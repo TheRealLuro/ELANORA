@@ -1,4 +1,4 @@
-#include "elanora/lsl/muse_device.hpp"
+#include "elanora/device/muse_device.hpp"
 
 #include <algorithm>
 
@@ -6,7 +6,7 @@
 #include <windows.h>
 #endif
 
-namespace elanora::lsl {
+namespace elanora::device {
 
 namespace {
 
@@ -273,4 +273,4 @@ void MuseDevice::resolve_channels() {
     channels_.sr_imu = try_rate(board_id_, aux);
 }
 
-}  // namespace elanora::lsl
+}  // namespace elanora::device

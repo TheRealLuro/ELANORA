@@ -12,8 +12,8 @@
 #include "elanora/collector/audio_engine.hpp"
 #include "elanora/collector/recorder.hpp"
 #include "elanora/collector/session.hpp"
-#include "elanora/lsl/signal_quality.hpp"
-#include "elanora/lsl/stream_recorder.hpp"
+#include "elanora/device/signal_quality.hpp"
+#include "elanora/device/stream_recorder.hpp"
 
 namespace elanora::collector {
 
@@ -86,9 +86,9 @@ struct CollectorState {
 // failed. In demo mode the electrode figures also describe synthesised signal,
 // so the pre-flight check would pass on data that is not from a headset.
 void draw_collector(CollectorState& st,
-                    const std::array<lsl::ChannelQuality, kSensorCount>& qual,
-                    lsl::StreamRecorder* stream,
-                    const lsl::ChannelMap* channels,
+                    const std::array<device::ChannelQuality, kSensorCount>& qual,
+                    device::StreamRecorder* stream,
+                    const device::ChannelMap* channels,
                     float dt);
 
 }  // namespace elanora::collector

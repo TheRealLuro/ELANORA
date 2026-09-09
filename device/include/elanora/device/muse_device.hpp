@@ -22,7 +22,7 @@
 #include "board_shim.h"
 #include "brainflow_constants.h"
 
-namespace elanora::lsl {
+namespace elanora::device {
 
 // Channel indices and sampling rates for the three Muse 2 presets, resolved
 // from BrainFlow at connect time. An index of -1 means the board does not
@@ -130,4 +130,4 @@ private:
     std::unique_ptr<BoardShim> board_;
 };
 
-}  // namespace elanora::lsl
+}  // namespace elanora::device

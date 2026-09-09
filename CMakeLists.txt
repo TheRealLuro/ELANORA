@@ -114,17 +114,18 @@ endfunction()
 # ---------------------------------------------------------------------------
 # Modules. Order matters: each depends only on those above it.
 #   common    <- everything
-#   LSL       -> common
-#   collector -> common, LSL
+#   device    -> common
+#   collector -> common, device
 #   data      -> common
 #   models    -> common, data   (the optimizer consumes OutcomeEvidence)
 # ---------------------------------------------------------------------------
 add_subdirectory(common)
-add_subdirectory(LSL)
+add_subdirectory(device)
 add_subdirectory(collector)
 add_subdirectory(data)
 add_subdirectory(models)
 add_subdirectory(server)
+add_subdirectory(tools)
 
 message(STATUS "")
 message(STATUS "ELANORA configured")

@@ -6,7 +6,7 @@
 #
 # Dependency graph these targets serve:
 #   common    -> (none)
-#   LSL       -> BrainFlow
+#   device    -> BrainFlow
 #   collector -> miniaudio
 #   data      -> BrainFlow (DataFilter DSP), Eigen
 #   models    -> Eigen

@@ -462,9 +462,9 @@ std::vector<PlannedRound> CollectorState::preview_schedule() const {
 }
 
 void draw_collector(CollectorState& st,
-                    const std::array<lsl::ChannelQuality, kSensorCount>& qual,
-                    lsl::StreamRecorder* stream,
-                    const lsl::ChannelMap* channels,
+                    const std::array<device::ChannelQuality, kSensorCount>& qual,
+                    device::StreamRecorder* stream,
+                    const device::ChannelMap* channels,
                     float dt) {
     const double now_ts = stream
         ? stream->latest_ts(BrainFlowPresets::DEFAULT_PRESET)
@@ -607,14 +607,14 @@ void draw_collector(CollectorState& st,
             else ImGui::TextColored(v4(theme::kFaint), "live");
             ImGui::Dummy(ImVec2(1, 6));
             for (int i = 0; i < kSensorCount; ++i) {
-                const lsl::ChannelQuality& cq = qual[static_cast<std::size_t>(i)];
+                const device::ChannelQuality& cq = qual[static_cast<std::size_t>(i)];
                 // Without a headset these figures describe whatever is in the
                 // buffer, which in demo mode is synthesised signal. Four green
                 // dots and plausible microvolts would be a pre-flight check
                 // that passes on data no electrode produced.
                 const theme::Rgba c = !live ? theme::kFaint
-                                    : cq.q == lsl::Quality::Good   ? theme::kGood
-                                    : cq.q == lsl::Quality::Fair   ? theme::kWarn
+                                    : cq.q == device::Quality::Good   ? theme::kGood
+                                    : cq.q == device::Quality::Fair   ? theme::kWarn
                                                                    : theme::kBad;
                 const ImVec2 p = ImGui::GetCursorScreenPos();
                 ImGui::GetWindowDrawList()->AddCircleFilled(
@@ -648,7 +648,7 @@ void draw_collector(CollectorState& st,
             // and the reduced quality is recorded either way.
             int n_bad = 0;
             for (int i = 0; i < kSensorCount; ++i) {
-                if (qual[static_cast<std::size_t>(i)].q == lsl::Quality::Bad) ++n_bad;
+                if (qual[static_cast<std::size_t>(i)].q == device::Quality::Bad) ++n_bad;
             }
             const bool electrodes_ok = (n_bad == 0) || st.override_quality;
 
@@ -1009,10 +1009,10 @@ void draw_collector(CollectorState& st,
         // is caught in the round it happens rather than at analysis.
         for (int i = 0; i < kSensorCount; ++i) {
             const auto& q = qual[static_cast<std::size_t>(i)];
-            const theme::Rgba c = q.q == lsl::Quality::Good ? theme::kGood
-                                : q.q == lsl::Quality::Fair ? theme::kWarn : theme::kBad;
-            const int level = q.q == lsl::Quality::Good ? 0
-                            : q.q == lsl::Quality::Fair ? 1 : 2;
+            const theme::Rgba c = q.q == device::Quality::Good ? theme::kGood
+                                : q.q == device::Quality::Fair ? theme::kWarn : theme::kBad;
+            const int level = q.q == device::Quality::Good ? 0
+                            : q.q == device::Quality::Fair ? 1 : 2;
             const ImVec2 p = ImGui::GetCursorScreenPos();
             status_glyph(ImVec2(p.x + 10.0f, p.y + 11.0f), 9.0f, level, c);
             ImGui::SetCursorScreenPos(ImVec2(p.x + 28.0f, p.y));

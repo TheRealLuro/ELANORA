@@ -15,7 +15,7 @@
 #include <vector>
 
 #include "elanora/collector/session.hpp"
-#include "elanora/lsl/stream_recorder.hpp"
+#include "elanora/device/stream_recorder.hpp"
 #include "elanora/types.hpp"
 
 namespace elanora::collector {
@@ -42,11 +42,11 @@ public:
 
     // One round's raw streams plus its markers and metadata.
     bool write_round(int round_index, const PlannedRound& round,
-                     const std::vector<lsl::Sample>& eeg,
-                     const std::vector<lsl::Sample>& ppg,
-                     const std::vector<lsl::Sample>& imu,
+                     const std::vector<device::Sample>& eeg,
+                     const std::vector<device::Sample>& ppg,
+                     const std::vector<device::Sample>& imu,
                      const std::vector<Marker>& markers,
-                     const lsl::ChannelMap& channels,
+                     const device::ChannelMap& channels,
                      std::string& err);
 
     // Appended after the subject answers, keyed to the same trial_id.

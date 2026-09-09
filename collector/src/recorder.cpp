@@ -62,7 +62,7 @@ bool append_row(const fs::path& file, const std::vector<std::string>& header,
 // Writes one raw stream. Every channel BrainFlow reported is written, not just
 // the ones currently used -- a feature invented next year has to be computable
 // from these files without repeating the experiment.
-bool write_stream(const fs::path& file, const std::vector<lsl::Sample>& samples,
+bool write_stream(const fs::path& file, const std::vector<device::Sample>& samples,
                   const std::vector<std::string>& header, int ts_row, std::string& err) {
     if (samples.empty()) return true;   // a board without this stream is not an error
 
@@ -148,11 +148,11 @@ std::string TrialRecorder::trial_row_id(int round_index) const {
 }
 
 bool TrialRecorder::write_round(int round_index, const PlannedRound& round,
-                                const std::vector<lsl::Sample>& eeg,
-                                const std::vector<lsl::Sample>& ppg,
-                                const std::vector<lsl::Sample>& imu,
+                                const std::vector<device::Sample>& eeg,
+                                const std::vector<device::Sample>& ppg,
+                                const std::vector<device::Sample>& imu,
                                 const std::vector<Marker>& markers,
-                                const lsl::ChannelMap& channels,
+                                const device::ChannelMap& channels,
                                 std::string& err) {
     err.clear();
     if (!active_) { err = "no trial in progress"; return false; }

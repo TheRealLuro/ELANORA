@@ -18,6 +18,7 @@
 //   muse_monitor --verbose       leave BrainFlow's stderr logging on
 //   muse_monitor --screenshot P  save the final frame to PNG at P
 //   muse_monitor --collector     open on the Collector tab
+//   muse_monitor --waves         open on the waveform view
 //   muse_monitor --autostart     begin a trial immediately (automation)
 
 #include <algorithm>
@@ -33,9 +34,9 @@
 #include <vector>
 
 #include "elanora/collector/view.hpp"
-#include "elanora/lsl/muse_device.hpp"
-#include "elanora/lsl/signal_quality.hpp"
-#include "elanora/lsl/stream_recorder.hpp"
+#include "elanora/device/muse_device.hpp"
+#include "elanora/device/signal_quality.hpp"
+#include "elanora/device/stream_recorder.hpp"
 #include "elanora/render.hpp"
 #include "elanora/theme.hpp"
 #include "elanora/types.hpp"
@@ -45,7 +46,7 @@
 #include "imgui.h"
 
 using namespace elanora;
-using namespace elanora::lsl;
+using namespace elanora::device;
 
 namespace {
 
@@ -430,12 +431,111 @@ void metric_card(const char* id, float width, float height,
 
 }  // namespace
 
+
+// Four stacked EEG lanes.
+//
+// The numeric dashboard answers "is this electrode seated" faster than a trace
+// does, which is why it is the default. But a waveform answers questions the
+// numbers cannot: whether a burst was one event or a train, whether an
+// artifact is a jaw clench or a lead falling off, and whether the signal is
+// moving at all. It is also the Milestone 1 gate as written -- four traces
+// moving, watched while the subject blinks.
+//
+// Every sample here goes through display_chain first, and that copy is never
+// the one recorded. Filtering the stored data would make band powers depend on
+// which toggles happened to be on when the operator walked past.
+void draw_waveforms(const std::vector<Sample>& win, const ChannelMap& ch,
+                    DisplaySettings& display, float height) {
+    // The documented pattern: end_card() unconditionally, like ImGui::EndChild.
+    // An early return with its own end_card() works, but it puts two textual
+    // calls against one begin and makes the balance ungreppable -- which is
+    // exactly how the doubled-call bug hid last time.
+    if (begin_card("##waves", ImVec2(0, height))) {
+        eyebrow("EEG");
+        ImGui::SameLine();
+        right_align(330.0f);
+
+        // Fixed sensitivity, never auto-fit: auto-scaling makes a dead electrode
+        // fill its lane exactly like a healthy one.
+        static const char* kScales[] = {"50", "100", "200"};
+        int scale_idx = display.uv_per_div <= 50.0 ? 0 : (display.uv_per_div <= 100.0 ? 1 : 2);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 3.0f);
+        if (segmented("##uvdiv", kScales, 3, &scale_idx, 108.0f)) {
+            display.uv_per_div = scale_idx == 0 ? 50.0 : (scale_idx == 1 ? 100.0 : 200.0);
+        }
+        ImGui::SameLine(0.0f, theme::kS2);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3.0f);
+        ImGui::TextColored(v4(theme::kFaint), "uV/div");
+        ImGui::SameLine(0.0f, theme::kS4);
+        ImGui::Checkbox("0.5 Hz", &display.highpass);
+        ImGui::SameLine(0.0f, theme::kS3);
+        ImGui::Checkbox("60 Hz", &display.notch);
+
+        ImGui::Dummy(ImVec2(1.0f, theme::kS3));
+
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        const float width = ImGui::GetContentRegionAvail().x;
+        const float axis_h = 20.0f;
+        const float body = ImGui::GetContentRegionAvail().y - axis_h - 4.0f;
+        const float lane_gap = 6.0f;
+        const float lane_h = (body - lane_gap * (kSensorCount - 1)) / kSensorCount;
+        const float label_w = 52.0f;
+        const float plot_x = origin.x + label_w;
+        const float plot_w = width - label_w;
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        int total_gaps = 0;
+
+        for (int i = 0; i < kSensorCount; ++i) {
+            const float top = origin.y + (lane_h + lane_gap) * static_cast<float>(i);
+
+            dl->AddRectFilled(ImVec2(plot_x, top), ImVec2(plot_x + plot_w, top + lane_h),
+                              ImGui::GetColorU32(v4(theme::kGround)), theme::kRadiusSm);
+            // Zero line, so a trace that has walked off centre is visible as such.
+            dl->AddLine(ImVec2(plot_x, top + lane_h * 0.5f),
+                        ImVec2(plot_x + plot_w, top + lane_h * 0.5f),
+                        ImGui::GetColorU32(ImVec4(theme::kLine.r, theme::kLine.g,
+                                                  theme::kLine.b, 0.8f)), 1.0f);
+
+            if (fonts().mono) ImGui::PushFont(fonts().mono);
+            dl->AddText(ImVec2(origin.x, top + lane_h * 0.5f - ImGui::GetTextLineHeight() * 0.5f),
+                        ImGui::GetColorU32(v4(theme::kDim)),
+                        electrode_name(static_cast<SensorId>(i)));
+            if (fonts().mono) ImGui::PopFont();
+
+            if (i >= static_cast<int>(ch.eeg.size()) || ch.sr_eeg <= 0) continue;
+            const auto raw = channel_of(win, ch.eeg[static_cast<std::size_t>(i)]);
+            if (raw.empty()) continue;
+
+            const auto shown = display_chain(raw, ch.sr_eeg, display);
+            total_gaps += draw_trace_minmax(shown, ImVec2(plot_x, top),
+                                            ImVec2(plot_w, lane_h),
+                                            display.uv_per_div,
+                                            theme::band_color(i % kBandCount));
+            draw_scale_bar(ImVec2(plot_x + 4.0f, top), lane_h, display.uv_per_div,
+                           theme::kFaint);
+        }
+
+        draw_time_grid(ImVec2(plot_x, origin.y), ImVec2(plot_w, body), kWindowSeconds, 1.0);
+
+        ImGui::Dummy(ImVec2(width, body + 2.0f));
+        if (total_gaps > 0) {
+            // Reported rather than hidden: a gap is drawn as a break in the line,
+            // and the count says how much of the window that break represents.
+            ImGui::TextColored(v4(theme::kWarn), "%d samples lost to dropped packets",
+                               total_gaps);
+        }
+    }
+    end_card();
+}
+
 int main(int argc, char** argv) {
     bool synthetic = false, autoconnect = false, verbose = false, demo = false;
     int max_frames = -1;
     const char* shot_path = nullptr;
     bool start_collector = false;
     bool autostart = false;
+    bool start_waves = false;
     Transport transport = Transport::NativeBle;
     std::string bled_port;
     for (int i = 1; i < argc; ++i) {
@@ -449,6 +549,7 @@ int main(int argc, char** argv) {
             shot_path = argv[++i];
         else if (std::strcmp(argv[i], "--collector") == 0) start_collector = true;
         else if (std::strcmp(argv[i], "--autostart") == 0) autostart = true;
+        else if (std::strcmp(argv[i], "--waves") == 0) start_waves = true;
         else if (std::strcmp(argv[i], "--bled") == 0) {
             transport = Transport::BledDongle;
             // The port is optional so --bled alone picks the only port there
@@ -491,6 +592,11 @@ int main(int argc, char** argv) {
         poll_running = false;
         if (poll_thread.joinable()) poll_thread.join();
     };
+
+    // Numbers by default; waveforms are the Milestone 1 gate and the answer to
+    // questions a number cannot express.
+    int view = start_waves ? 1 : 0;
+    DisplaySettings display;
 
     std::array<char, 64> device_id{};
     std::string status = "Not connected";
@@ -648,6 +754,12 @@ int main(int argc, char** argv) {
         static const char* kTabs[] = {"Monitor", "Collector"};
         segmented("##tab", kTabs, 2, &tab, 196.0f);
 
+        if (tab == 0) {
+            ImGui::SameLine(0.0f, theme::kS3);
+            static const char* kViews[] = {"Numbers", "Waves"};
+            segmented("##view", kViews, 2, &view, 150.0f);
+        }
+
         ImGui::SameLine(0.0f, theme::kS4);
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
         if (!device.connected()) {
@@ -793,9 +905,12 @@ int main(int argc, char** argv) {
 
         ImGui::Dummy(ImVec2(1.0f, theme::kS1));
 
-        // ---- band matrix ---------------------------------------------------
+        // ---- waveforms or band matrix ---------------------------------------
         const float table_h = ImGui::GetContentRegionAvail().y - 4.0f;
-        if (begin_card("##matrix", ImVec2(0, table_h))) {
+
+        if (view == 1) {
+            draw_waveforms(eeg_win, ch, display, table_h);
+        } else if (begin_card("##matrix", ImVec2(0, table_h))) {
             eyebrow("Relative band power");
             ImGui::SameLine();
             right_align(190.0f);

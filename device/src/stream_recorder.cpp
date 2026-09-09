@@ -1,8 +1,8 @@
-#include "elanora/lsl/stream_recorder.hpp"
+#include "elanora/device/stream_recorder.hpp"
 
 #include <algorithm>
 
-namespace elanora::lsl {
+namespace elanora::device {
 
 void StreamRecorder::start(MuseDevice& device) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -142,4 +142,4 @@ const StreamRecorder::Stream& StreamRecorder::stream_for(BrainFlowPresets preset
     return const_cast<StreamRecorder*>(this)->stream_for(preset);
 }
 
-}  // namespace elanora::lsl
+}  // namespace elanora::device

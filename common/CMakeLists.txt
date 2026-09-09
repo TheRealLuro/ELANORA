@@ -33,10 +33,4 @@ if(ELANORA_BUILD_APPS)
   # stb_image_write lives here; see cmake/Dependencies.cmake.
   target_include_directories(elanora_ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
-  # Not a unit test: opens a real window to verify GLFW, the GL context and the
-  # ImGui/ImPlot backends initialise and tear down. Run with --frames N in CI.
-  elanora_add_app(ui_smoke
-    SOURCES app/ui_smoke_main.cpp
-    DEPS    elanora_ui
-  )
 endif()

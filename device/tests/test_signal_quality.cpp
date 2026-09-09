@@ -7,9 +7,9 @@
 #include <random>
 #include <vector>
 
-#include "elanora/lsl/signal_quality.hpp"
+#include "elanora/device/signal_quality.hpp"
 
-using namespace elanora::lsl;
+using namespace elanora::device;
 
 namespace {
 

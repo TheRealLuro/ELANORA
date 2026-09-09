@@ -32,19 +32,20 @@ stores the data and does the analysis.
 | Folder | Role |
 |---|---|
 | `common/` | Shared types, CSV layer, UI shell |
-| `LSL/` | Muse 2 device I/O, `muse_monitor` diagnostics |
+| `device/` | Muse 2 device I/O, `muse_monitor` diagnostics |
 | `collector/` | Stimulus generation, trial runner, protocol constants |
 | `data/` | Features, quality control, statistics, the evidence gate |
 | `models/` | Ridge/GP models, validation, forward and inverse |
 | `server/` | `elanora_serve` — hosts the phone app, receives recordings |
 | `web/` | The phone collector |
+| `tools/` | Developer tools, not part of the shipped system |
 
 ## Build and test
 
 ```bash
 cmake -B build -S .
 cmake --build build --config Release
-ctest --test-dir build -C Release        # 252 tests
+ctest --test-dir build -C Release        # 258 tests
 ```
 
 JavaScript tests run in a browser, not a test runner — start the server below
@@ -114,6 +115,14 @@ independent variable.
 Only the wave condition can attribute a response to the rate itself, which is
 why both exist.
 
+**Finer coverage comes from more sessions, not longer ones.** Quarter-octave
+spacing is 27 frequencies — 62 minutes in one sitting, and a fatigued subject
+in round 28 is worse than no data. So session *b* of *n* takes every *n*th
+frequency: two sessions give quarter-octave, four give eighth, and each stays
+near 36 minutes. Interleaved rather than split in half, so every session still
+spans 0.5–45 Hz and a session-level shift cannot masquerade as a frequency
+effect.
+
 ## Constraints worth knowing
 
 - **Grouped validation only.** Leave-one-session-out and leave-one-subject-out.
@@ -141,5 +150,5 @@ why both exist.
 
 ## Docs
 
-- `docs/superpowers/specs/` — design decisions and rationale
-- `docs/superpowers/plans/` — task breakdown
+- `docs/specs/` — design decisions and rationale
+- `docs/plans/` — task breakdown

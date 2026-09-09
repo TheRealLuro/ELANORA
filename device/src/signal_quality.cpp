@@ -1,9 +1,9 @@
-#include "elanora/lsl/signal_quality.hpp"
+#include "elanora/device/signal_quality.hpp"
 
 #include <cmath>
 #include <numeric>
 
-namespace elanora::lsl {
+namespace elanora::device {
 
 namespace {
 
@@ -86,4 +86,4 @@ const char* quality_name(Quality q) {
     return "unknown";
 }
 
-}  // namespace elanora::lsl
+}  // namespace elanora::device

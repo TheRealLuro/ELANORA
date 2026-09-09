@@ -5,9 +5,9 @@
 #include <string>
 #include <thread>
 
-#include "elanora/lsl/muse_device.hpp"
+#include "elanora/device/muse_device.hpp"
 
-using namespace elanora::lsl;
+using namespace elanora::device;
 
 namespace {
 

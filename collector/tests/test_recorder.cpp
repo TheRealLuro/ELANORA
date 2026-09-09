@@ -36,11 +36,11 @@ struct TempDir {
     ~TempDir() { std::error_code ec; fs::remove_all(path, ec); }
 };
 
-std::vector<lsl::Sample> make_samples(int n, int n_channels, double t0, double dt) {
-    std::vector<lsl::Sample> out;
+std::vector<device::Sample> make_samples(int n, int n_channels, double t0, double dt) {
+    std::vector<device::Sample> out;
     out.reserve(static_cast<std::size_t>(n));
     for (int i = 0; i < n; ++i) {
-        lsl::Sample s;
+        device::Sample s;
         s.ts = t0 + i * dt;
         s.values.assign(static_cast<std::size_t>(n_channels), 0.0);
         // Column c carries c*1000 + i, so a transposed or off-by-one write is
@@ -53,8 +53,8 @@ std::vector<lsl::Sample> make_samples(int n, int n_channels, double t0, double d
     return out;
 }
 
-lsl::ChannelMap muse_like_map() {
-    lsl::ChannelMap ch;
+device::ChannelMap muse_like_map() {
+    device::ChannelMap ch;
     ch.eeg    = {1, 2, 3, 4};
     ch.ppg    = {1, 2, 3};
     ch.accel  = {1, 2, 3};
@@ -373,9 +373,9 @@ TEST_CASE("a recorded round's files carry the declared headers", "[schema]") {
     REQUIRE(rec.begin_trial(tmp.path, "P01", 1, design, d, 42, 1, err));
 
     PlannedRound round{Condition::Stim, 10.0, 0.0};
-    lsl::ChannelMap ch;
+    device::ChannelMap ch;
     ch.eeg = {1, 2, 3, 4};
-    std::vector<lsl::Sample> eeg{lsl::Sample{0.0, {0.0, 1.0, 2.0, 3.0, 4.0}}};
+    std::vector<device::Sample> eeg{device::Sample{0.0, {0.0, 1.0, 2.0, 3.0, 4.0}}};
     REQUIRE(rec.write_round(0, round, eeg, {}, {}, {}, ch, err));
 
     const auto dir = tmp.path / "raw" / rec.session_id();

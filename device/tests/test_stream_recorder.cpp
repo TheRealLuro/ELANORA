@@ -5,9 +5,9 @@
 #include <chrono>
 #include <thread>
 
-#include "elanora/lsl/stream_recorder.hpp"
+#include "elanora/device/stream_recorder.hpp"
 
-using namespace elanora::lsl;
+using namespace elanora::device;
 
 namespace {
 

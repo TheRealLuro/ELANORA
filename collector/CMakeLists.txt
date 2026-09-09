@@ -28,7 +28,7 @@ if(ELANORA_BUILD_APPS AND ELANORA_WITH_BRAINFLOW)
       src/recorder.cpp
     DEPS
       elanora_collector
-      elanora_lsl
+      elanora_device
       miniaudio::miniaudio
   )
 
@@ -48,16 +48,6 @@ if(ELANORA_BUILD_APPS AND ELANORA_WITH_BRAINFLOW)
       elanora_collector
       elanora_collector_io
       elanora_ui
-      elanora_lsl
+      elanora_device
   )
-endif()
-
-# Emits reference values from the C++ tone generator for the browser port to be
-# checked against. Not part of the shipped system -- a conformance tool.
-#
-#   tone_reference > web/fixtures/tone_reference.json
-if(ELANORA_BUILD_APPS)
-  add_executable(tone_reference app/tone_reference_main.cpp)
-  target_link_libraries(tone_reference PRIVATE elanora_collector)
-  elanora_set_warnings(tone_reference)
 endif()

@@ -15,9 +15,9 @@
 #include <mutex>
 #include <vector>
 
-#include "elanora/lsl/muse_device.hpp"
+#include "elanora/device/muse_device.hpp"
 
-namespace elanora::lsl {
+namespace elanora::device {
 
 // One instant across every channel of one preset. `values` holds every row
 // BrainFlow returned, including the timestamp row, so nothing is discarded at
@@ -75,4 +75,4 @@ private:
     Stream ppg_;  // ANCILLARY_PRESET
 };
 
-}  // namespace elanora::lsl
+}  // namespace elanora::device
