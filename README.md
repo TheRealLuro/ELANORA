@@ -85,6 +85,12 @@ deliberately before collecting from other subjects.
 ./build/bin/Release/elanora_models    # train, then invert
 ```
 
+`elanora_data` has three tabs. **Browse** lists the trials and draws the
+selected one's raw EEG, PPG and IMU with the three periods shaded from the
+markers — that is how you tell a real alpha rise from a lead that came loose,
+since both produce a number. **Features** charts band power per sensor across
+the three periods. **Evidence** is the one that matters.
+
 **Read the Evidence tab before trusting any recommendation.** If every outcome
 reads `NoEvidence`, that is a valid result: frequency did not measurably affect
 this subject pool under this protocol. The honest next step is a protocol

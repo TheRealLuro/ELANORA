@@ -12,6 +12,7 @@
 // meaningful yet. That sentence is the whole reason this application exists.
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -91,6 +92,11 @@ void reload(AppState& st) {
     st.heart_features = Table::read_or_empty(st.root / "features" / "heart_features.csv");
     st.breath_features = Table::read_or_empty(st.root / "features" / "breath_features.csv");
     st.evidence       = elanora::data::read_evidence(st.root);
+
+    // Select the first trial so the detail panel shows something on open. An
+    // empty panel reads as "this feature is broken" far more readily than as
+    // "nothing is selected".
+    if (st.selected_trial < 0 && !st.trials.empty()) st.selected_trial = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +140,176 @@ void draw_header(AppState& st) {
 
     ImGui::EndChild();
     ImGui::PopStyleColor();
+}
+
+
+// ---------------------------------------------------------------------------
+// Trial detail
+// ---------------------------------------------------------------------------
+
+// The raw streams of one trial, with the three periods shaded and the markers
+// drawn where they actually fell.
+//
+// A table of band powers says what the extractor concluded. This says what it
+// concluded it FROM, which is the only way to tell a real alpha rise from a
+// lead that came loose halfway through -- both produce a number, and only one
+// of them is a finding. It is also how you confirm the periods line up with
+// the markers rather than trusting that they did.
+struct RawTrial {
+    std::string trial_id;
+    Table eeg, ppg, imu, markers;
+    bool loaded = false;
+};
+
+void load_raw(const AppState& st, const std::string& session_id,
+              const std::string& trial_id, RawTrial& out) {
+    if (out.trial_id == trial_id && out.loaded) return;   // cached
+    const auto dir = st.root / "raw" / session_id;
+    out.trial_id = trial_id;
+    out.eeg     = Table::read_or_empty(dir / (trial_id + "_eeg.csv"));
+    out.ppg     = Table::read_or_empty(dir / (trial_id + "_ppg.csv"));
+    out.imu     = Table::read_or_empty(dir / (trial_id + "_imu.csv"));
+    out.markers = Table::read_or_empty(dir / (trial_id + "_markers.csv"));
+    out.loaded  = true;
+}
+
+std::vector<double> column_of(const Table& t, const char* col) {
+    std::vector<double> v;
+    v.reserve(t.rows());
+    for (std::size_t i = 0; i < t.rows(); ++i) {
+        const std::string cell = t.get(i, col);
+        // An empty cell is a gap the recorder deliberately preserved. It has to
+        // stay a gap: substituting zero draws a spike to baseline that reads as
+        // a physiological event.
+        v.push_back(cell.empty() ? std::numeric_limits<double>::quiet_NaN()
+                                 : t.num(i, col));
+    }
+    return v;
+}
+
+void draw_trial_detail(AppState& st, RawTrial& raw, float height) {
+    const std::size_t sel = static_cast<std::size_t>(st.selected_trial);
+    if (st.selected_trial < 0 || sel >= st.trials.rows()) {
+        ImGui::TextColored(v4(theme::kFaint), "Select a trial above to see its raw signals.");
+        return;
+    }
+    const std::string trial_id  = st.trials.get(sel, "trial_id");
+    const std::string session_id = st.trials.get(sel, "session_id");
+    load_raw(st, session_id, trial_id, raw);
+
+    if (raw.eeg.empty()) {
+        ImGui::TextColored(v4(theme::kWarn),
+                           "No raw EEG on disk for %s.", trial_id.c_str());
+        return;
+    }
+
+    // Timestamps are absolute seconds; everything is drawn relative to the
+    // first sample so the axis reads 0..120 rather than a Unix epoch.
+    const double t0 = raw.eeg.num(0, "timestamp");
+    const double t1 = raw.eeg.num(raw.eeg.rows() - 1, "timestamp");
+    const double span = std::max(1.0, t1 - t0);
+
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float label_w = 54.0f;
+    const float plot_x = origin.x + label_w;
+    const float plot_w = width - label_w;
+    const float axis_h = 18.0f;
+    const float lane_gap = 5.0f;
+
+    static const char* kEegCols[] = {"TP9", "AF7", "AF8", "TP10"};
+    const int lanes = kSensorCount + 2;   // four EEG, then PPG and IMU
+    const float lane_h = (height - axis_h - lane_gap * (lanes - 1)) / lanes;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // Period shading behind everything, straight from the markers rather than
+    // from the nominal durations -- if a round ran long, this shows it.
+    const float body_top = origin.y;
+    const float body_bot = origin.y + height - axis_h;
+    struct Span { const char* from; theme::Rgba c; };
+    static const Span kSpans[] = {
+        {"baseline_start", theme::kDelta},
+        {"stimulus_start", theme::kAlpha},
+        {"post_start",     theme::kTheta},
+    };
+    for (int k = 0; k < 3; ++k) {
+        double a = -1.0, b = -1.0;
+        for (std::size_t i = 0; i < raw.markers.rows(); ++i) {
+            const std::string ev = raw.markers.get(i, "event");
+            if (ev == kSpans[k].from) a = raw.markers.num(i, "timestamp");
+            else if (a >= 0.0 && b < 0.0 &&
+                     (ev == "stimulus_start" || ev == "post_start" || ev == "trial_end")) {
+                b = raw.markers.num(i, "timestamp");
+            }
+        }
+        if (a < 0.0) continue;
+        if (b < 0.0) b = t1;
+        const float xa = plot_x + static_cast<float>((a - t0) / span) * plot_w;
+        const float xb = plot_x + static_cast<float>((b - t0) / span) * plot_w;
+        const theme::Rgba c = kSpans[k].c;
+        dl->AddRectFilled(ImVec2(xa, body_top), ImVec2(xb, body_bot),
+                          ImGui::GetColorU32(ImVec4(c.r, c.g, c.b, 0.07f)));
+        dl->AddLine(ImVec2(xa, body_top), ImVec2(xa, body_bot),
+                    ImGui::GetColorU32(ImVec4(c.r, c.g, c.b, 0.55f)), 1.0f);
+    }
+
+    int gaps = 0;
+    for (int i = 0; i < lanes; ++i) {
+        const float top = origin.y + (lane_h + lane_gap) * static_cast<float>(i);
+
+        const char* label;
+        std::vector<double> series;
+        double full_scale;
+        theme::Rgba colour;
+
+        if (i < kSensorCount) {
+            label = kEegCols[i];
+            series = column_of(raw.eeg, kEegCols[i]);
+            full_scale = 100.0;                   // uV per division
+            colour = theme::band_color(i % kBandCount);
+        } else if (i == kSensorCount) {
+            label = "PPG";
+            series = column_of(raw.ppg, "ppg_ir");
+            // PPG counts span orders of magnitude between subjects, so the
+            // scale is taken from this trial rather than fixed.
+            double lo = 1e18, hi = -1e18;
+            for (double v : series) {
+                if (!std::isfinite(v)) continue;
+                lo = std::min(lo, v); hi = std::max(hi, v);
+            }
+            const double mid = (lo + hi) * 0.5;
+            for (double& v : series) v -= mid;
+            full_scale = std::max(1.0, (hi - lo) * 0.5);
+            colour = theme::kBad;
+        } else {
+            label = "IMU";
+            series = column_of(raw.imu, "az");
+            full_scale = 0.5;                     // g
+            colour = theme::kGood;
+        }
+
+        dl->AddRectFilled(ImVec2(plot_x, top), ImVec2(plot_x + plot_w, top + lane_h),
+                          ImGui::GetColorU32(ImVec4(0, 0, 0, 0.25f)), theme::kRadiusSm);
+        if (fonts().mono) ImGui::PushFont(fonts().mono);
+        dl->AddText(ImVec2(origin.x, top + lane_h * 0.5f - ImGui::GetTextLineHeight() * 0.5f),
+                    ImGui::GetColorU32(v4(theme::kDim)), label);
+        if (fonts().mono) ImGui::PopFont();
+
+        if (!series.empty()) {
+            gaps += draw_trace_minmax(series, ImVec2(plot_x, top),
+                                      ImVec2(plot_w, lane_h), full_scale, colour,
+                                      false);
+        }
+    }
+
+    draw_time_grid(ImVec2(plot_x, origin.y), ImVec2(plot_w, height - axis_h), span, 15.0);
+    ImGui::Dummy(ImVec2(width, height));
+
+    if (gaps > 0) {
+        ImGui::TextColored(v4(theme::kWarn),
+                           "%d samples missing -- drawn as breaks, never bridged", gaps);
+    }
 }
 
 void draw_browse(AppState& st) {
@@ -209,6 +385,128 @@ void draw_browse(AppState& st) {
     }
 }
 
+
+// Band power per sensor, as bars rather than a row of numbers.
+//
+// The question this answers is "did anything move between baseline, stimulus
+// and post", and three numbers side by side answer it far more slowly than
+// three bars do. Grouped by band so the comparison the eye makes is the one
+// that matters -- the same band across periods -- rather than different bands
+// against each other, which are not comparable quantities.
+void draw_band_chart(const AppState& st, const std::string& trial_id,
+                     bool relative, float height) {
+    static const char* kPeriods[] = {"baseline", "stimulus", "post"};
+
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float col_w = width / kSensorCount;
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    const float head_h = 18.0f;
+    const float plot_h = height - head_h - 16.0f;
+
+    for (int sensor = 0; sensor < kSensorCount; ++sensor) {
+        const float cx = origin.x + col_w * static_cast<float>(sensor);
+
+        char sid[8];
+        std::snprintf(sid, sizeof(sid), "S%d", sensor + 1);
+        if (fonts().eyebrow) ImGui::PushFont(fonts().eyebrow);
+        dl->AddText(ImVec2(cx + 4.0f, origin.y),
+                    ImGui::GetColorU32(v4(theme::kMuted)), sid);
+        if (fonts().eyebrow) ImGui::PopFont();
+
+        // One scale per sensor rather than per band: bands differ in magnitude
+        // by an order of magnitude, and rescaling each would make every band
+        // look equally strong.
+        double vals[3][kBandCount] = {};
+        double peak = 0.0;
+        std::string dominant;
+        double margin = 0.0;
+        for (int p = 0; p < 3; ++p) {
+            for (std::size_t r = 0; r < st.brain_features.rows(); ++r) {
+                if (st.brain_features.get(r, "trial_id") != trial_id) continue;
+                if (st.brain_features.get(r, "sensor") != sid) continue;
+                if (st.brain_features.get(r, "period") != kPeriods[p]) continue;
+                for (int b = 0; b < kBandCount; ++b) {
+                    const std::string col = (relative ? "rel_" : "abs_") +
+                                            std::string(band_name(static_cast<Band>(b)));
+                    vals[p][b] = st.brain_features.num(r, col);
+                    peak = std::max(peak, vals[p][b]);
+                }
+                if (std::string(kPeriods[p]) == "stimulus") {
+                    dominant = st.brain_features.get(r, "dominant_band");
+                    margin = st.brain_features.num(r, "dominance_margin");
+                }
+                break;
+            }
+        }
+        if (peak <= 0.0) peak = 1.0;
+
+        const float group_w = (col_w - 12.0f) / kBandCount;
+        const float bar_w = std::max(2.0f, (group_w - 6.0f) / 3.0f);
+        const float base_y = origin.y + head_h + plot_h;
+
+        for (int b = 0; b < kBandCount; ++b) {
+            const float gx = cx + 6.0f + group_w * static_cast<float>(b);
+            const theme::Rgba c = theme::band_color(b);
+            for (int p = 0; p < 3; ++p) {
+                const float h = static_cast<float>(vals[p][b] / peak) * plot_h;
+                const float x = gx + bar_w * static_cast<float>(p);
+                // One hue per band; the period is carried by opacity, so a
+                // colour never encodes a value.
+                const float alpha = 0.35f + 0.325f * static_cast<float>(p);
+                dl->AddRectFilled(ImVec2(x, base_y - h), ImVec2(x + bar_w - 1.0f, base_y),
+                                  ImGui::GetColorU32(ImVec4(c.r, c.g, c.b, alpha)), 1.5f);
+            }
+            if (fonts().eyebrow) ImGui::PushFont(fonts().eyebrow);
+            dl->AddText(ImVec2(gx, base_y + 3.0f),
+                        ImGui::GetColorU32(v4(theme::kFaint)),
+                        band_name(static_cast<Band>(b)));
+            if (fonts().eyebrow) ImGui::PopFont();
+        }
+
+        dl->AddLine(ImVec2(cx + 6.0f, base_y), ImVec2(cx + col_w - 6.0f, base_y),
+                    ImGui::GetColorU32(v4(theme::kLine)), 1.0f);
+
+        if (!dominant.empty()) {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "%s %+.3f", dominant.c_str(), margin);
+            if (fonts().eyebrow) ImGui::PushFont(fonts().eyebrow);
+            // A weak margin is dimmed: the leader is not really leading, and
+            // showing it as a clean classification would overstate it.
+            dl->AddText(ImVec2(cx + 28.0f, origin.y),
+                        ImGui::GetColorU32(v4(margin > 0.05 ? theme::kText : theme::kFaint)),
+                        buf);
+            if (fonts().eyebrow) ImGui::PopFont();
+        }
+    }
+
+    ImGui::Dummy(ImVec2(width, height));
+}
+
+void draw_browse_with_detail(AppState& st, RawTrial& raw) {
+    const float avail = ImGui::GetContentRegionAvail().y;
+    const float table_h = avail * 0.45f;
+
+    if (begin_card("##trials", ImVec2(0, table_h))) {
+        eyebrow("Trials");
+        ImGui::Dummy(ImVec2(1, theme::kS2));
+        draw_browse(st);
+    }
+    end_card();
+
+    if (begin_card("##detail", ImVec2(0, 0))) {
+        eyebrow("Raw signals");
+        ImGui::SameLine();
+        right_align(320.0f);
+        ImGui::TextColored(v4(theme::kFaint),
+                           "shaded: baseline / stimulus / post, from the markers");
+        ImGui::Dummy(ImVec2(1, theme::kS3));
+        draw_trial_detail(st, raw, ImGui::GetContentRegionAvail().y - 24.0f);
+    }
+    end_card();
+}
+
 void draw_features(AppState& st) {
     if (st.brain_features.empty()) {
         ImGui::Dummy(ImVec2(1, 40.0f));
@@ -219,6 +517,7 @@ void draw_features(AppState& st) {
 
     static const char* kSensors[] = {"all", "S1", "S2", "S3", "S4"};
     static const char* kPeriods[] = {"all", "baseline", "stimulus", "post"};
+    static bool show_relative = true;
 
     ImGui::TextColored(v4(theme::kMuted), "sensor");
     ImGui::SameLine();
@@ -230,7 +529,6 @@ void draw_features(AppState& st) {
     ImGui::SetNextItemWidth(130.0f);
     ImGui::Combo("##period", &st.period_filter, kPeriods, 4);
 
-    static bool show_relative = true;
     ImGui::SameLine();
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + theme::kS3);
     ImGui::Checkbox("relative power", &show_relative);
@@ -240,6 +538,29 @@ void draw_features(AppState& st) {
                                      : "(absolute; carries electrode impedance)");
 
     ImGui::Dummy(ImVec2(1, theme::kS2));
+
+    // The selected trial as bars, above the table it came from. The table is
+    // the record; the chart is how you actually see whether anything moved.
+    const std::size_t sel = static_cast<std::size_t>(st.selected_trial);
+    if (st.selected_trial >= 0 && sel < st.trials.rows()) {
+        const std::string trial_id = st.trials.get(sel, "trial_id");
+        if (begin_card("##bands", ImVec2(0, 190.0f))) {
+            eyebrow("Band power by sensor");
+            ImGui::SameLine();
+            right_align(340.0f);
+            ImGui::TextColored(v4(theme::kFaint),
+                               "%s  --  faint to solid: baseline, stimulus, post",
+                               trial_id.c_str());
+            ImGui::Dummy(ImVec2(1, theme::kS2));
+            draw_band_chart(st, trial_id, show_relative,
+                            ImGui::GetContentRegionAvail().y - 6.0f);
+        }
+        end_card();
+    } else {
+        ImGui::TextColored(v4(theme::kFaint),
+                           "Select a trial in Browse to chart its bands.");
+        ImGui::Dummy(ImVec2(1, theme::kS2));
+    }
 
     const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                   ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
@@ -496,7 +817,8 @@ int main(int argc, char** argv) {
         };
 
         if (ImGui::BeginTabBar("tabs")) {
-            if (ImGui::BeginTabItem("Browse", nullptr, tab_flags(0)))   { draw_browse(st);   ImGui::EndTabItem(); }
+            static RawTrial raw;
+            if (ImGui::BeginTabItem("Browse", nullptr, tab_flags(0)))   { draw_browse_with_detail(st, raw); ImGui::EndTabItem(); }
             if (ImGui::BeginTabItem("Features", nullptr, tab_flags(1))) { draw_features(st); ImGui::EndTabItem(); }
             if (ImGui::BeginTabItem("Evidence", nullptr, tab_flags(2))) { draw_evidence(st); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
