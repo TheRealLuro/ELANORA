@@ -1,0 +1,130 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ELANORA — collected</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* Wider than the phone pages: this one is read on the PC while a session
+     runs, so it can use the room. */
+  body { max-width: 1100px; margin: 0 auto; }
+  .totals { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 4px; }
+  .tot b { display: block; font-size: 30px; font-weight: 300;
+           font-variant-numeric: tabular-nums; }
+  .tot span { font-size: 12px; color: var(--muted); }
+  .sess { margin-bottom: 8px; }
+  .sess h3 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+  .sess .meta { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 5px; }
+  .pill { font: 11px/1 ui-monospace, monospace; padding: 7px 0; width: 42px;
+          text-align: center; border-radius: 5px; background: #0e1217;
+          border-bottom: 2px solid var(--line); color: var(--muted); }
+  .pill.stim   { border-bottom-color: #39d98a; }
+  .pill.jit    { border-bottom-color: #8b6cf0; }
+  .pill.tone   { border-bottom-color: #f2b544; }
+  .pill.bad    { background: #2a1416; color: var(--bad); }
+  .pill.susp   { outline: 1px solid var(--warn); }
+  .legend { font-size: 12px; color: var(--faint); margin-top: 10px; }
+  .legend i { display: inline-block; width: 16px; height: 3px; margin: 0 5px 0 14px;
+              vertical-align: middle; border-radius: 2px; }
+  .empty { color: var(--faint); font-size: 14px; }
+  #err { color: var(--bad); font-size: 13px; }
+</style>
+
+<header>
+  <h1>ELANORA — collected</h1>
+  <span id="status">loading…</span>
+</header>
+
+<div class="card">
+  <div class="totals">
+    <div class="tot"><b id="t-sessions">0</b><span>sessions</span></div>
+    <div class="tot"><b id="t-rounds">0</b><span>rounds stored</span></div>
+    <div class="tot"><b id="t-surveys">0</b><span>surveys</span></div>
+    <div class="tot"><b id="t-suspect">0</b><span>suspect</span></div>
+    <div class="tot"><b id="t-missing">0</b><span>missing files</span></div>
+  </div>
+  <div class="hint">
+    Refreshes every 3 s. Round counts come from the files on disk, not from the
+    trial rows — a row whose CSVs never landed is exactly the failure worth
+    seeing, and counting rows would hide it.
+  </div>
+  <div id="err"></div>
+</div>
+
+<div id="sessions"></div>
+
+<script type="module">
+const el = (id) => document.getElementById(id);
+
+function pill(t) {
+  const cls = t.condition === "stim" ? "stim"
+            : t.condition === "control_jitter" ? "jit" : "tone";
+  const bad = t.files < 4 ? " bad" : "";
+  const susp = t.suspect ? " susp" : "";
+  const n = t.trial_id.slice(t.trial_id.lastIndexOf("_R") + 2) || "?";
+  const hz = Number(t.frequency_hz);
+  const title = `${t.trial_id}\n${t.condition}` +
+                (hz > 0 ? ` ${hz.toFixed(1)} Hz` : "") +
+                `\n${t.n_eeg} EEG samples, ${t.files}/4 files` +
+                (t.suspect ? "\nSUSPECT: lost time during the round" : "");
+  return `<div class="pill ${cls}${bad}${susp}" title="${title}">${n}</div>`;
+}
+
+async function refresh() {
+  try {
+    const res = await fetch("/status", { cache: "no-store" });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const d = await res.json();
+    el("err").textContent = "";
+
+    let rounds = 0, suspect = 0, missing = 0;
+    for (const s of d.sessions) {
+      for (const t of s.trials) {
+        rounds++;
+        if (t.suspect) suspect++;
+        if (t.files < 4) missing++;
+      }
+    }
+    el("t-sessions").textContent = d.sessions.length;
+    el("t-rounds").textContent = rounds;
+    el("t-surveys").textContent = d.surveys;
+    el("t-suspect").textContent = suspect;
+    el("t-missing").textContent = missing;
+    el("t-missing").style.color = missing ? "var(--bad)" : "";
+    el("t-suspect").style.color = suspect ? "var(--warn)" : "";
+
+    el("status").textContent = rounds ? "collecting" : "nothing yet";
+    el("status").className = rounds ? "live" : "";
+
+    el("sessions").innerHTML = d.sessions.length
+      ? d.sessions.slice().reverse().map((s) => `
+          <div class="card sess">
+            <h3>${s.session_id}</h3>
+            <div class="meta">
+              ${s.subject_id || "—"} · ${s.trials.length} rounds
+              ${s.battery_pct ? " · battery " + s.battery_pct + "%" : ""}
+              ${s.suspect ? ' · <span style="color:var(--warn)">' +
+                            s.suspect + " suspect</span>" : ""}
+            </div>
+            <div class="pills">${s.trials.map(pill).join("")}</div>
+          </div>`).join("") +
+        `<div class="legend">
+           <i style="background:#39d98a"></i>stimulus
+           <i style="background:#8b6cf0"></i>jitter control
+           <i style="background:#f2b544"></i>tone control
+           &nbsp;&nbsp;red = files missing, outlined = suspect
+         </div>`
+      : `<div class="card"><div class="empty">
+           No rounds yet. Start a session on the phone and they will appear here
+           as each one finishes.
+         </div></div>`;
+  } catch (e) {
+    el("err").textContent = e.message;
+    el("status").textContent = "server unreachable";
+    el("status").className = "err";
+  }
+}
+
+refresh();
+setInterval(refresh, 3000);
+</script>

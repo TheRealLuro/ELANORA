@@ -65,4 +65,12 @@ bool store_session(const std::filesystem::path& root, const std::string& body,
 bool store_subject(const std::filesystem::path& root, const std::string& body,
                    std::string& err);
 
+// What is on disk, as JSON, for the status page.
+//
+// Reads trials.csv and counts the raw files that actually exist rather than
+// trusting the row: a trial row whose CSVs are missing is precisely the
+// failure worth seeing, and a summary that took the row at its word would
+// hide it.
+std::string dataset_status_json(const std::filesystem::path& root);
+
 }  // namespace elanora::server

@@ -24,6 +24,12 @@ const CONTINUOUS_SCALE = 0.70710678118654752;
 // envelope (1-cos)/2 has 3A^2/16. Equalising the two gives 2/sqrt(3).
 const WAVE_SCALE = 1.1547005383792515;
 
+// Swell: the same rate delivered as a continuous tone that only breathes in
+// volume. At 35% depth it never reaches silence, so the ear gets no onset to
+// latch onto -- which separates entrainment to a periodic amplitude change
+// from a startle response to a sound starting.
+const SWELL_DEPTH = 0.35;
+
 // xorshift64, matching ToneGenerator::next_jitter_gap, so a recorded jitter
 // round can be regenerated exactly from its seed when reviewing a session.
 function xorshift(state) {
@@ -139,9 +145,17 @@ export function renderStimulus(ctx, opts) {
       for (let l = 0; l < layers.length; l++) {
         gatePhase[l] += layers[l] * dt;
         if (gatePhase[l] >= 1) gatePhase[l] -= 1;
-        sum += envelope === "wave"
-          ? (1 - Math.cos(TAU * gatePhase[l])) * 0.5 * WAVE_SCALE
-          : (gatePhase[l] < clampedDuty ? 1 : 0);
+        if (envelope === "wave") {
+          sum += (1 - Math.cos(TAU * gatePhase[l])) * 0.5 * WAVE_SCALE;
+        } else if (envelope === "swell") {
+          // Oscillates about 1, normalised to the envelope RMS a 50%-duty gate
+          // has -- which is sqrt(duty), not 0.5.
+          const m = 1 - SWELL_DEPTH * Math.cos(TAU * gatePhase[l]);
+          sum += m / Math.sqrt(1 + SWELL_DEPTH * SWELL_DEPTH * 0.5) *
+                 Math.sqrt(clampedDuty);
+        } else {
+          sum += gatePhase[l] < clampedDuty ? 1 : 0;
+        }
       }
       target = sum / layers.length;
     }
@@ -150,7 +164,7 @@ export function renderStimulus(ctx, opts) {
     // and a 4 ms low-pass sits near 40 Hz, so at the top of the frequency set
     // it would measurably shrink the modulation depth -- quietly making a
     // 45 Hz wave round a weaker stimulus than a 4 Hz one.
-    if (envelope === "wave" && condition === "stim") env = target;
+    if (envelope !== "gated" && condition === "stim") env = target;
     else env += (target - env) * rampCoeff;
 
     carrier += carrierInc;

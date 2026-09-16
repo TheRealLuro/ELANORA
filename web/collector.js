@@ -33,6 +33,7 @@ export class Session {
   #audioEpoch = 0;
   #queue = new UploadQueue("");
   #source = null;
+  #pending = null;
 
   constructor(streams) {
     this.#streams = streams;
@@ -51,6 +52,9 @@ export class Session {
     this.bank = 0;
     // Latest telemetry reading, set by the BLE handler.
     this.telemetry = null;
+    // Rounds that completed the full cycle and reached disk.
+    this.completed = 0;
+    this.#pending = null;
     this.trialNumber = 1;
     this.seed = 84120;
     this.durations = { baseline: 30, stimulus: 30, post: 30, rest: 30 };
@@ -175,13 +179,29 @@ export class Session {
   }
 
   async #runAll() {
+    // A round is saved only after the whole cycle -- baseline, stimulus, post,
+    // and the questions -- has completed.
+    //
+    // Stopping early therefore keeps every round that finished and discards
+    // only the one in progress. The upload used to happen at the end of the
+    // post phase, before the survey, so aborting during the questions left a
+    // trial row on disk with no survey row to go with it: a round that did not
+    // complete the cycle, stored as though it had. Nothing downstream could
+    // tell the difference, and the survey carries the manipulation check.
     for (let i = 0; i < this.schedule.length && this.running; i++) {
       this.roundIndex = i;
-      await this.#runRound(i);
-      if (!this.running) break;
+      const done = await this.#runRound(i);
+      if (!done || !this.running) break;
+
       // The survey occupies the rest window rather than adding to it, which is
       // what keeps 18 rounds inside 36 minutes.
-      if (this.onSurvey) await this.onSurvey(i);
+      if (this.onSurvey) {
+        const answered = await this.onSurvey(i);
+        if (!answered || !this.running) break;
+      }
+
+      await this.#uploadRound(i, this.#pending.spec, this.#pending.round);
+      this.completed++;
     }
     this.running = false;
     this.onDone?.();
@@ -241,7 +261,13 @@ export class Session {
     try { this.#source.stop(); } catch { /* already ended */ }
     this.#source = null;
 
-    if (this.running) await this.#uploadRound(i, spec, round);
+    if (!this.running) return false;
+
+    // Held rather than uploaded: the cycle is not complete until the questions
+    // are answered. The ring buffers keep 240 s, so a 30 s survey cannot age
+    // this data out from under us.
+    this.#pending = { spec, round };
+    return true;
   }
 
   #sliceCsv(stream, header, t0, t1, columns) {

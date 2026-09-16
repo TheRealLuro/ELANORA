@@ -14,7 +14,7 @@
 <script type="module">
 import { decodeEeg, decodePpg, decodeImu, unwrap, ACCEL_SCALE } from "./decode.js";
 import { Stream } from "./ringbuffer.js";
-import { assess, bandPowers, peakHz } from "./dsp.js";
+import { assess, bandPowers, peakHz, heartRate, breathRate, motionEnergy } from "./dsp.js";
 import { toCsv, envelope } from "./upload.js";
 import { Round } from "./protocol.js";
 import { renderStimulus } from "./tone.js";
@@ -324,6 +324,7 @@ g("tone conformance");
     ["control_tone", { condition: "control_tone", seed: 1 }],
     ["wave_10hz", { condition: "stim", hz: 10, seed: 1, envelope: "wave" }],
     ["wave_45hz", { condition: "stim", hz: 45, seed: 1, envelope: "wave" }],
+    ["swell_10hz", { condition: "stim", hz: 10, seed: 1, envelope: "swell" }],
   ];
 
   for (const [name, opts] of cases) {
@@ -346,6 +347,92 @@ g("tone conformance");
     check(`${name} matches the C++ waveform`, worst < 1e-6,
           `worst ${worst.toExponential(2)} at sample ${worstAt}`);
   }
+}
+
+
+// ------------------------------------------------------------------ vitals
+g("vitals");
+{
+  // Synthetic signals at known rates. The first version of these estimators
+  // had no test at all, which is how it shipped reporting confident wrong
+  // numbers -- the failure was invisible without a ground truth to check.
+  const pulse = (bpm, sr, secs, amp = 1) => {
+    const out = [];
+    const period = 60 / bpm;
+    for (let i = 0; i < sr * secs; i++) {
+      const t = i / sr;
+      const phase = (t % period) / period;
+      // Sharp systolic upstroke, slow decay -- closer to PPG than a sine.
+      out.push(amp * Math.exp(-phase * 6) * (1 - phase * 0.3));
+    }
+    return out;
+  };
+  const slow = (brpm, sr, secs, amp = 1) =>
+    Array.from({ length: Math.round(sr * secs) },
+               (_, i) => amp * Math.sin(2 * Math.PI * (brpm / 60) * i / sr));
+  const noise = (sr, secs, amp) =>
+    Array.from({ length: Math.round(sr * secs) }, () => (Math.random() - 0.5) * amp);
+
+  const hr72 = heartRate(pulse(72, 64, 30), 64);
+  check("72 bpm pulse reads as 72", near(hr72.bpm, 72, 4),
+        `got ${hr72.bpm.toFixed(1)}`);
+  check("a clean pulse is high quality", hr72.quality > 0.6,
+        `quality ${hr72.quality.toFixed(2)}`);
+
+  const hr50 = heartRate(pulse(50, 64, 30), 64);
+  check("50 bpm pulse reads as 50", near(hr50.bpm, 50, 4), `got ${hr50.bpm.toFixed(1)}`);
+  // The octave error this correction exists for: a dicrotic notch makes a
+  // threshold detector count two peaks per beat, and because that error is
+  // regular the quality term would rate it excellent.
+  const hr50s = heartRate(pulse(50, 64, 30), 64);
+  check("50 bpm is not reported as 100", hr50s.bpm < 75,
+        `got ${hr50s.bpm.toFixed(1)}, spectral ${hr50s.spectral.toFixed(1)}`);
+
+  const hr100 = heartRate(pulse(100, 64, 30), 64);
+  check("100 bpm pulse reads as 100", near(hr100.bpm, 100, 5), `got ${hr100.bpm.toFixed(1)}`);
+
+  // The property that matters most: noise must not yield a confident number.
+  const hrNoise = heartRate(noise(64, 30, 1), 64);
+  check("noise does not produce a confident heart rate",
+        hrNoise.bpm === 0 || hrNoise.quality < 0.5,
+        `bpm ${hrNoise.bpm.toFixed(1)} quality ${hrNoise.quality.toFixed(2)}`);
+
+  const flat = heartRate(Array(64 * 30).fill(0), 64);
+  check("a flat PPG reports no beats", flat.bpm === 0 && flat.quality === 0);
+
+  // Breathing: 12/min on one axis, noise on the rest.
+  const axes12 = [slow(12, 52, 40), noise(52, 40, 0.002), noise(52, 40, 0.002),
+                  noise(52, 40, 0.002), noise(52, 40, 0.002), noise(52, 40, 0.002)];
+  const br = breathRate(axes12, 52);
+  check("12 breaths/min reads as 12", near(br.brpm, 12, 1.5), `got ${br.brpm.toFixed(1)}`);
+  check("the strongest axis is chosen", br.axis === "ax", `got ${br.axis}`);
+  check("both estimators agree on a clean signal",
+        near(br.brpm, br.spectral, 2.5),
+        `zero-cross ${br.brpm.toFixed(1)} spectral ${br.spectral.toFixed(1)}`);
+  check("a clean breathing signal is confident", br.confidence > 0.5,
+        `confidence ${br.confidence.toFixed(2)}`);
+
+  const axes6 = [slow(6, 52, 40), noise(52, 40, 0.002), noise(52, 40, 0.002),
+                 noise(52, 40, 0.002), noise(52, 40, 0.002), noise(52, 40, 0.002)];
+  check("6 breaths/min reads as 6", near(breathRate(axes6, 52).brpm, 6, 1.5),
+        `got ${breathRate(axes6, 52).brpm.toFixed(1)}`);
+
+  // Pure noise must report LOW CONFIDENCE rather than a confident wrong rate.
+  // This is the case the simplified version failed silently.
+  const axesNoise = Array.from({ length: 6 }, () => noise(52, 40, 0.01));
+  const brNoise = breathRate(axesNoise, 52);
+  check("noise reports low breathing confidence", brNoise.confidence < 0.4,
+        `confidence ${brNoise.confidence.toFixed(2)}`);
+
+  // Motion energy sits above the respiratory band, so breathing must not trip it.
+  const still = motionEnergy([slow(12, 52, 30, 0.02), slow(12, 52, 30, 0.02),
+                              slow(12, 52, 30, 0.02)], 52);
+  const moving = motionEnergy([slow(240, 52, 30, 0.2), slow(240, 52, 30, 0.2),
+                               slow(240, 52, 30, 0.2)], 52);
+  check("breathing alone does not read as motion", still < 0.02,
+        `got ${still.toFixed(4)}`);
+  check("4 Hz movement does read as motion", moving > still * 5,
+        `still ${still.toFixed(4)} moving ${moving.toFixed(4)}`);
 }
 
 // ---------------------------------------------------------------- report

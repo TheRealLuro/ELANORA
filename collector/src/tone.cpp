@@ -27,7 +27,11 @@ constexpr double kTwoPi = 6.283185307179586;
 }  // namespace
 
 const char* envelope_name(Envelope e) {
-    return e == Envelope::Wave ? "wave" : "gated";
+    switch (e) {
+        case Envelope::Wave:  return "wave";
+        case Envelope::Swell: return "swell";
+        default:              return "gated";
+    }
 }
 
 ToneGenerator::ToneGenerator(int sample_rate) { set_sample_rate(sample_rate); }
@@ -175,10 +179,23 @@ void ToneGenerator::render(float* out, int frames) {
                 for (int l = 0; l < n_layers_; ++l) {
                     gate_phase_[l] += rate_[l] * dt;
                     if (gate_phase_[l] >= 1.0) gate_phase_[l] -= 1.0;
-                    const double e =
-                        envelope_ == Envelope::Wave
-                            ? (1.0 - std::cos(kTwoPi * gate_phase_[l])) * 0.5 * kWaveScale
-                            : (gate_phase_[l] < duty_ ? 1.0 : 0.0);
+                    double e;
+                    if (envelope_ == Envelope::Wave) {
+                        e = (1.0 - std::cos(kTwoPi * gate_phase_[l])) * 0.5 * kWaveScale;
+                    } else if (envelope_ == Envelope::Swell) {
+                        // Oscillates about 1 rather than about its own peak, so
+                        // the tone never reaches silence. Scaled so its RMS
+                        // matches the other two: mean square of
+                        // 1 + d*cos is 1 + d^2/2.
+                        const double m = 1.0 - kSwellDepth * std::cos(kTwoPi * gate_phase_[l]);
+                        // Normalise to the same envelope RMS a 50%-duty gate
+                        // has, which is sqrt(duty) rather than 0.5 -- getting
+                        // that wrong made Swell quieter by exactly 1/sqrt(2).
+                        e = m / std::sqrt(1.0 + kSwellDepth * kSwellDepth * 0.5) *
+                            std::sqrt(duty_);
+                    } else {
+                        e = (gate_phase_[l] < duty_ ? 1.0 : 0.0);
+                    }
                     sum += e * amp_[l];
                 }
                 target = sum / n_layers_;
@@ -191,7 +208,7 @@ void ToneGenerator::render(float* out, int frames) {
         // low-pass sits near 40 Hz, so at the top of the frequency set it would
         // measurably shrink the modulation depth -- quietly making a 45 Hz wave
         // round a weaker stimulus than a 4 Hz one.
-        if (envelope_ == Envelope::Wave && cond_ == Condition::Stim) {
+        if (envelope_ != Envelope::Gated && cond_ == Condition::Stim) {
             env_ = target;
         } else {
             env_ += (target - env_) * ramp_coeff_;

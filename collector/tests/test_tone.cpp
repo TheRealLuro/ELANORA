@@ -278,3 +278,68 @@ TEST_CASE("a wave envelope carries no harmonics of its rate", "[tone][envelope]"
     INFO("third-harmonic ratio: gated " << gated_ratio << " wave " << wave_ratio);
     REQUIRE(wave_ratio < gated_ratio * 0.1);
 }
+
+TEST_CASE("a swell round never falls silent", "[tone][envelope]") {
+    // The property that distinguishes Swell from Wave, and the reason it
+    // exists. Wave reaches zero once per cycle, so the ear gets an onset to
+    // latch onto and a response could be a startle rather than entrainment.
+    // Swell only breathes in volume, so a rate that works under it is driving
+    // the periodic amplitude change itself.
+    const int sr = 48000;
+    auto envelope_floor = [&](Envelope env) {
+        StimulusDesign d;
+        d.mode = StimMode::Single;
+        d.envelope = env;
+        d.carrier_hz = 440.0;
+        d.duty = 0.5;
+        d.layers.push_back(Layer{4.0, 1.0, true});
+        ToneGenerator g(sr);
+        g.configure(d, Condition::Stim, 4.0, 0.0, 1);
+        g.set_gate(true);
+        std::vector<float> buf(static_cast<std::size_t>(sr) * 2, 0.0f);
+        g.render(buf.data(), sr);
+
+        // Envelope recovered as a short-window peak, so carrier zero crossings
+        // are not mistaken for silence.
+        const int win = sr / 200;          // 5 ms, well above the 2.3 ms carrier
+        double floor_v = 1e9;
+        for (int i = sr / 4; i + win < sr; i += win) {
+            double pk = 0.0;
+            for (int k = 0; k < win; ++k) pk = std::max(pk, std::abs(static_cast<double>(buf[(i + k) * 2])));
+            floor_v = std::min(floor_v, pk);
+        }
+        return floor_v;
+    };
+
+    const double wave_floor = envelope_floor(Envelope::Wave);
+    const double swell_floor = envelope_floor(Envelope::Swell);
+    INFO("wave floor " << wave_floor << ", swell floor " << swell_floor);
+    REQUIRE(wave_floor < 0.02);          // Wave does reach silence
+    REQUIRE(swell_floor > 0.10);         // Swell does not
+}
+
+TEST_CASE("all three envelopes are equally loud", "[tone][loudness]") {
+    // Shape is meant to be the only difference between them. If one were
+    // louder, any response difference would be confounded with volume.
+    const int sr = 48000;
+    auto level = [&](Envelope env) {
+        StimulusDesign d;
+        d.mode = StimMode::Single;
+        d.envelope = env;
+        d.carrier_hz = 440.0;
+        d.duty = 0.5;
+        d.layers.push_back(Layer{10.0, 1.0, true});
+        ToneGenerator g(sr);
+        g.configure(d, Condition::Stim, 10.0, 0.0, 1);
+        g.set_gate(true);
+        std::vector<float> buf(static_cast<std::size_t>(sr) * 2 * 4, 0.0f);
+        g.render(buf.data(), sr * 4);
+        return ToneGenerator::rms(buf.data(), sr * 4);
+    };
+    const double g4 = level(Envelope::Gated);
+    const double w = level(Envelope::Wave);
+    const double sw = level(Envelope::Swell);
+    INFO("gated " << g4 << " wave " << w << " swell " << sw);
+    REQUIRE(w == Catch::Approx(g4).epsilon(0.05));
+    REQUIRE(sw == Catch::Approx(g4).epsilon(0.05));
+}

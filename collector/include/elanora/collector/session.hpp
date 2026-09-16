@@ -47,10 +47,26 @@ enum class StimMode {
 // gated 10 Hz stimulus could be driven by the harmonics rather than by 10 Hz
 // itself, and only the sine condition can separate the two. They are offered
 // as separate session types so each can be learned from on its own.
+// Three depths of the same idea, from hardest to gentlest:
+//
+//   Gated    WOO_WOO_WOO   hard on/off, silence between pulses
+//   Wave     WOOoo_WOOoo   smooth swell that still reaches silence
+//   Swell    WOOOOOOOOOO   continuous tone that only breathes in volume
+//
+// Swell is not a control: it carries the rate like the other two, but at 35%
+// modulation depth it never goes silent, so there is no onset for the ear to
+// latch onto. That separates two things the first two envelopes confound --
+// entrainment to a periodic amplitude change, versus a startle response to a
+// sound starting. A rate that works under Swell is driving the former.
 enum class Envelope {
     Gated,   // isochronic: hard on/off at the rate, raised-cosine edges
-    Wave     // sinusoidal amplitude modulation at the rate
+    Wave,    // sinusoidal amplitude modulation, full depth
+    Swell    // sinusoidal amplitude modulation, shallow -- never silent
 };
+
+// Modulation depth of a Swell round. 1.0 would be Wave; 0 would be a steady
+// tone with no rate in it at all.
+inline constexpr double kSwellDepth = 0.35;
 
 const char* envelope_name(Envelope e);
 

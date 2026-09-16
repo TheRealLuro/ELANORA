@@ -3,6 +3,7 @@
 #include <cctype>
 #include <fstream>
 #include <map>
+#include <vector>
 #include <stdexcept>
 
 #include "elanora/collector/schema.hpp"
@@ -381,6 +382,104 @@ bool store_session(const fs::path& root, const std::string& body, std::string& e
 bool store_subject(const fs::path& root, const std::string& body, std::string& err) {
     return store_keyed(root, "subjects.csv", collector::kSubjectsHeader, body,
                        "subject_id", err);
+}
+
+
+
+// ---------------------------------------------------------------------------
+// Status
+// ---------------------------------------------------------------------------
+
+std::string dataset_status_json(const fs::path& root) {
+    std::error_code ec;
+    std::string out = "{\"sessions\":[";
+
+    // Read trials.csv directly rather than through the data layer: the server
+    // does not link it, and this needs nothing more than the columns.
+    std::ifstream in(root / "trials.csv");
+    std::vector<std::vector<std::string>> rows;
+    std::vector<std::string> header;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        std::vector<std::string> cells;
+        std::string cur;
+        bool quoted = false;
+        for (const char c : line) {
+            if (c == '"') { quoted = !quoted; continue; }
+            if (c == ',' && !quoted) { cells.push_back(cur); cur.clear(); continue; }
+            cur += c;
+        }
+        cells.push_back(cur);
+        if (header.empty()) header = cells;
+        else rows.push_back(cells);
+    }
+
+    auto col = [&](const std::vector<std::string>& r, const char* name) -> std::string {
+        for (std::size_t i = 0; i < header.size() && i < r.size(); ++i) {
+            if (header[i] == name) return r[i];
+        }
+        return "";
+    };
+
+    // Group by session, preserving first-seen order so the newest work is not
+    // buried under an alphabetical sort.
+    std::vector<std::string> order;
+    std::map<std::string, std::vector<const std::vector<std::string>*>> by_session;
+    for (const auto& r : rows) {
+        const std::string sid = col(r, "session_id");
+        if (sid.empty()) continue;
+        if (!by_session.count(sid)) order.push_back(sid);
+        by_session[sid].push_back(&r);
+    }
+
+    bool first_session = true;
+    for (const std::string& sid : order) {
+        if (!first_session) out += ',';
+        first_session = false;
+
+        const auto& trials = by_session[sid];
+        int suspect = 0;
+        std::string subject, battery;
+        out += "{\"session_id\":\"" + sid + "\",\"trials\":[";
+        bool first_trial = true;
+        for (const auto* r : trials) {
+            if (!first_trial) out += ',';
+            first_trial = false;
+            const std::string tid = col(*r, "trial_id");
+            if (subject.empty()) subject = col(*r, "subject_id");
+            const std::string sus = col(*r, "suspect");
+            if (sus == "1") ++suspect;
+            const std::string bp = col(*r, "battery_pct");
+            if (!bp.empty()) battery = bp;
+
+            // Counted from the filesystem, not from the row. A trial row whose
+            // files never landed is the failure this page exists to surface.
+            int files = 0;
+            for (const char* suffix : {"_eeg.csv", "_ppg.csv", "_imu.csv", "_markers.csv"}) {
+                if (fs::exists(root / "raw" / sid / (tid + suffix), ec)) ++files;
+            }
+            out += "{\"trial_id\":\"" + tid + "\"";
+            out += ",\"condition\":\"" + col(*r, "condition") + "\"";
+            out += ",\"frequency_hz\":\"" + col(*r, "frequency_hz") + "\"";
+            out += ",\"n_eeg\":" + (col(*r, "n_eeg").empty() ? "0" : col(*r, "n_eeg"));
+            out += ",\"suspect\":" + std::string(sus == "1" ? "true" : "false");
+            out += ",\"files\":" + std::to_string(files) + "}";
+        }
+        out += "],\"subject_id\":\"" + subject + "\"";
+        out += ",\"suspect\":" + std::to_string(suspect);
+        out += ",\"battery_pct\":\"" + battery + "\"}";
+    }
+
+    out += "],\"surveys\":";
+    {
+        std::ifstream sv(root / "surveys.csv");
+        int n = -1;   // header does not count
+        std::string l;
+        while (std::getline(sv, l)) ++n;
+        out += std::to_string(std::max(0, n));
+    }
+    return out + "}";
 }
 
 }  // namespace elanora::server

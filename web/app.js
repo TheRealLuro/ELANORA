@@ -163,8 +163,11 @@ function vitalRows() {
   const br = breathRate(axes, SR_IMU);
   const motion = motionEnergy(axes.slice(0, 3), SR_IMU);
 
-  const hrOk = hr.bpm >= 50 && hr.bpm <= 100;
-  const brOk = br.brpm >= 6 && br.brpm <= 25;
+  // In range AND believed. A number inside the physiological range that the
+  // estimator itself does not trust is exactly the case that made these read
+  // as wrong before: plausible, precise, and unfounded.
+  const hrOk = hr.bpm >= 50 && hr.bpm <= 100 && hr.quality > 0.4;
+  const brOk = br.brpm >= 6 && br.brpm <= 25 && br.confidence > 0.4;
   const still = motion < 0.05;
 
   return { hr, br, motion, hrOk, brOk, still };
@@ -181,13 +184,21 @@ function paintVitals(inRun) {
       `<td class="num ${still ? "good" : "warn"}">${motion.toFixed(3)}</td></tr>`;
     return;
   }
-  el("v-hr").textContent = hr.bpm ? `${hr.bpm.toFixed(0)} bpm` : "—";
+  // An unconvinced estimate is shown as unconvinced rather than rounded to a
+  // tidy number. Trusting a displayed figure that the estimator itself scores
+  // at 0.1 is worse than seeing no figure.
+  el("v-hr").textContent = hr.quality > 0.2 && hr.bpm
+    ? `${hr.bpm.toFixed(0)} bpm` : "—";
   el("v-hr").className = `num ${hr.bpm ? (hrOk ? "good" : "warn") : ""}`;
-  el("v-hr-n").textContent = hr.beats ? `${hr.beats} beats` : "no pulse found";
+  el("v-hr-n").textContent = hr.beats
+    ? `${hr.beats} beats · confidence ${hr.quality.toFixed(2)}`
+    : "no pulse found";
 
-  el("v-br").textContent = br.brpm ? `${br.brpm.toFixed(1)} br/min` : "—";
+  el("v-br").textContent = br.confidence > 0.2 && br.brpm
+    ? `${br.brpm.toFixed(1)} br/min` : "—";
   el("v-br").className = `num ${br.brpm ? (brOk ? "good" : "warn") : ""}`;
-  el("v-br-ax").textContent = br.axis ? `on ${br.axis}` : "";
+  el("v-br-ax").textContent = br.axis
+    ? `${br.axis} · confidence ${br.confidence.toFixed(2)}` : "";
 
   el("v-mot").textContent = motion.toFixed(3);
   el("v-mot").className = `num ${still ? "good" : "warn"}`;
@@ -318,6 +329,10 @@ el("start").onclick = async () => {
 
 el("abort").onclick = () => {
   session.abort();
+  // Resolve the survey promise as unanswered, so the round in progress is
+  // discarded rather than stored without its questions.
+  resolveSurvey?.(false);
+  resolveSurvey = null;
   show("collect");
 };
 
@@ -414,7 +429,7 @@ el("survey-submit").onclick = async () => {
   el("survey-submit").disabled = true;
   await session.submitSurvey(i, survey);
   show("run");
-  resolveSurvey?.();
+  resolveSurvey?.(true);
   resolveSurvey = null;
 };
 
@@ -422,7 +437,10 @@ el("survey-submit").onclick = async () => {
 
 session.onDone = async () => {
   show("done");
-  el("done-count").textContent = `${session.total} rounds`;
+  // What actually reached disk, not what was scheduled. After a stop those
+  // differ, and the scheduled number would overstate the session.
+  el("done-count").textContent =
+    `${session.completed} of ${session.total} rounds`;
   const left = await session.pendingUploads;
   el("done-hint").textContent = left
     ? `${left} rounds still uploading — keep this page open until it reaches zero.`

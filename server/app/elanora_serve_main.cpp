@@ -148,6 +148,12 @@ int main(int argc, char** argv) {
         res.set_content(elanora::server::schedule_json(rounds), "application/json");
     });
 
+    // Read-only, so no token: it exposes what is already being served, and an
+    // operator watching rounds land should not have to paste a secret to do it.
+    srv.Get("/status", [&root](const httplib::Request&, httplib::Response& res) {
+        res.set_content(elanora::server::dataset_status_json(root), "application/json");
+    });
+
     srv.Post("/round", [&root, &token](const httplib::Request& req, httplib::Response& res) {
         if (!authorized(req, token)) {
             res.status = 401;
