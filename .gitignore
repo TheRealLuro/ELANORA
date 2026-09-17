@@ -32,3 +32,16 @@ imgui.ini
 assets/fonts
 common/assets/fonts/*.ttf
 common/third_party/stb_image_write.h
+
+# Editor, IDE and coding-agent state. Local tooling, not part of the project.
+.claude/
+.cursor/
+.aider*
+.vscode/
+.idea/
+*.code-workspace
+
+# OS noise
+Thumbs.db
+.DS_Store
+desktop.ini

@@ -1,6 +1,8 @@
-# ELANORA Web Collector Implementation Plan
+# ELANORA Web Collector — implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+*Written before the work, and kept as a record of what was planned versus what
+the hardware actually turned out to require. Where the two differ, the code and
+the spec are authoritative.*
 
 **Goal:** Run a full 18-round ELANORA session from an iPhone against a Muse 2 over Web Bluetooth, uploading raw CSVs that `elanora_data.exe` reads unchanged.
 
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Vanilla ES modules (no build step, no npm), Web Bluetooth, Web Audio, IndexedDB, cpp-httplib, C++20/MSVC, Catch2.
 
-**Spec:** `docs/superpowers/specs/2026-09-03-muse-web-interface-design.md`
+**Spec:** `docs/specs/2026-09-03-muse-web-interface-design.md`
 
 ## Global Constraints
 
