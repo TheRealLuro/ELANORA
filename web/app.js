@@ -309,6 +309,26 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && session.running) holdScreen();
 });
 
+// Sound check. Gating Start on it would be tempting, but an operator who has
+// already confirmed audio once should not be blocked every session -- so it
+// nags rather than blocks, and remembers.
+let soundChecked = false;
+el("test-sound").onclick = async () => {
+  const btn = el("test-sound");
+  btn.disabled = true;
+  btn.textContent = "Playing…";
+  try {
+    await session.testTone();
+    soundChecked = true;
+    btn.textContent = "Play again";
+    el("test-hint").textContent =
+      "If you heard four slow pulses, the stimulus will reach the subject.";
+  } catch (e) {
+    el("test-hint").textContent = "Could not play: " + e.message;
+  }
+  btn.disabled = false;
+};
+
 el("start").onclick = async () => {
   el("setup-err").textContent = "";
   try {
@@ -316,6 +336,15 @@ el("start").onclick = async () => {
     // AudioContext outside one, and the failure is silent.
     await session.initAudio();
     await holdScreen();
+    if (!soundChecked) {
+      // One confirmation, not a block. A silent session costs 36 minutes and
+      // produces data that looks flawless, so it is worth one deliberate tap.
+      soundChecked = true;
+      el("setup-err").textContent =
+        "Run the sound test first — a silent session records perfectly and " +
+        "contains no stimulus. Press Start again to skip.";
+      return;
+    }
     session.subject = el("subject").value.trim() || "P01";
     session.ageBand = el("age-band").value.trim();
     if (!session.schedule.length) await session.fetchSchedule();

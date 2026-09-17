@@ -122,6 +122,14 @@
 
     <div class="protocol" id="protocol">18 rounds · 36 min · 120 s per round</div>
 
+    <button class="secondary" id="test-sound">Test the sound</button>
+    <div class="hint" id="test-hint">
+      Play four seconds of the real stimulus before you start. There is no way
+      for the app to check this itself — iOS mutes audio downstream of anything
+      the page can see, so a silent session would still record perfect-looking
+      data with no stimulus in it.
+    </div>
+
     <button id="start" disabled>Connect the headset first</button>
     <div class="hint">
       Runs on its own. The survey opens after each round.
@@ -132,13 +140,20 @@
   <div class="card" id="preflight">
     <div class="eyebrow">Before you start</div>
     <ol class="steps">
+      <li><b>Ringer ON — do not use the silent switch.</b> iOS gives plain web
+          audio a category that obeys that switch, so the stimulus goes mute
+          while everything else keeps playing. The app forces the louder
+          category, but the switch is still the first thing to check if the
+          test tone is silent.</li>
       <li><b>Auto-Lock off.</b> Settings → Display &amp; Brightness → Auto-Lock →
           Never. A screen lock suspends Bluetooth and audio mid-round, and the
           round is lost.</li>
       <li><b>Headphones on</b>, volume set once and not touched again. Changing
           it mid-session makes loudness differ between conditions.</li>
-      <li><b>Do Not Disturb on.</b> A notification sound lands in the middle of
-          a stimulus window.</li>
+      <li><b>Focus / Do Not Disturb</b> silences notifications, which is what
+          you want — a notification sound landing inside a stimulus window is an
+          uncontrolled auditory event. Turn it on, then run the test tone to
+          confirm the stimulus still sounds.</li>
     </ol>
   </div>
 </section>

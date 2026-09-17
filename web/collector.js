@@ -34,6 +34,7 @@ export class Session {
   #queue = new UploadQueue("");
   #source = null;
   #pending = null;
+  #unlock = null;
 
   constructor(streams) {
     this.#streams = streams;
@@ -104,13 +105,60 @@ export class Session {
 
   // iOS will not start audio outside a user gesture, so this must be called
   // synchronously from the Start button's handler.
+  //
+  // It also does something that looks superstitious and is not: it plays a
+  // silent looping <audio> element.
+  //
+  // On iOS a bare AudioContext gets an audio session category that RESPECTS
+  // the hardware silent switch, so Web Audio goes mute whenever the ringer is
+  // off -- while video and music apps, which ask for the "playback" category,
+  // keep sounding. Starting an <audio> element moves the whole page into that
+  // category, and Web Audio then plays regardless of the switch.
+  //
+  // Without this a session runs in total silence and still produces a
+  // flawless-looking dataset: clean EEG, correct markers, every round the
+  // right length, and no stimulus in any of it. Nothing downstream can detect
+  // that, which makes it the most expensive failure in the system.
   async initAudio() {
     if (!this.#ctx) {
       this.#ctx = new (window.AudioContext || window.webkitAudioContext)();
     }
+    if (!this.#unlock) {
+      this.#unlock = new Audio(
+        "data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA");
+      this.#unlock.loop = true;
+      this.#unlock.volume = 0.01;   // not 0: iOS treats a muted element as idle
+      this.#unlock.setAttribute("playsinline", "");
+    }
+    try {
+      await this.#unlock.play();
+    } catch {
+      // Blocked outside a gesture. The test tone on the setup screen is the
+      // backstop, and it is why that button exists.
+    }
     if (this.#ctx.state === "suspended") await this.#ctx.resume();
     this.#audioEpoch = this.#now() - this.#ctx.currentTime;
     return this.#ctx;
+  }
+
+  // Four seconds of the exact stimulus a round would play, so the operator can
+  // confirm sound is actually reaching their ears before committing to 36
+  // minutes. There is no way to verify this in software: iOS mutes downstream
+  // of everything the page can observe, so an AnalyserNode would happily
+  // report a healthy signal into a silent speaker.
+  async testTone() {
+    const ctx = await this.initAudio();
+    const buf = renderStimulus(ctx, {
+      condition: "stim",
+      hz: 4,                       // slow enough to hear the envelope shape
+      seconds: 4,
+      envelope: this.envelope,
+    });
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start();
+    return new Promise((resolve) => { src.onended = resolve; });
   }
 
   // perf-time -> audio-clock time.
