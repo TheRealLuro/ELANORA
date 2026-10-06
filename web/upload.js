@@ -115,6 +115,59 @@ export class UploadQueue {
     this.flush().catch(() => {});
   }
 
+  // Everything still queued, as one text file.
+  //
+  // The queue used to have exactly one way out -- POST to the origin the page
+  // was loaded from. When that origin went away, eight recorded rounds went
+  // with it: browser storage is scoped per origin, so a new tunnel hostname
+  // gets an empty database and the old one can no longer be loaded to reach
+  // its contents. A second exit that needs no server at all is the difference
+  // between a bad afternoon and lost data.
+  async exportAll() {
+    const db = await this.#open();
+    const all = await tx(db, "readonly", (s) => s.getAll());
+    if (!all.length) return { count: 0, blob: null };
+
+    // The same four CSVs the server would have written, at the same paths, so
+    // unzipping into data/datasets/ gives a dataset indistinguishable from one
+    // that uploaded normally. The old export was a single envelope-format .txt
+    // -- re-importable, but not readable by a person, which is half the point
+    // of having a rescue file at all.
+    const rowsIn = (csv) => (csv ? csv.split("\n").filter(Boolean).length - 1 : 0);
+    const entries = [];
+    const trialRows = [];
+
+    for (const rec of all) {
+      const m = rec.meta;
+      const dir = `raw/${m.session_id}`;
+      for (const key of ["eeg", "ppg", "imu", "markers"]) {
+        const csv = rec.sections[key];
+        if (csv) entries.push({ name: `${dir}/${m.trial_id}_${key}.csv`, text: csv });
+      }
+      // Counted from the payload rather than taken on trust, matching what the
+      // server does when it writes this row itself.
+      trialRows.push([
+        m.trial_id, m.session_id, m.subject_id, m.round_index, m.condition,
+        m.frequency_hz, m.jitter_mean_hz, "",
+        rowsIn(rec.sections.eeg), rowsIn(rec.sections.ppg), rowsIn(rec.sections.imu),
+        m.suspect ?? "0", m.battery_pct ?? "", m.temperature_c ?? "",
+      ].join(","));
+    }
+
+    entries.push({
+      name: "trials.csv",
+      text: "trial_id,session_id,subject_id,round_index,condition,frequency_hz," +
+            "jitter_mean_hz,started_at,n_eeg,n_ppg,n_imu,suspect,battery_pct," +
+            "temperature_c\n" + trialRows.join("\n") + "\n",
+    });
+
+    return {
+      count: all.length,
+      blob: makeZip(entries),
+      name: `elanora-rounds-${all.length}.zip`,
+    };
+  }
+
   async pending() {
     const db = await this.#open();
     return await tx(db, "readonly", (s) => s.count());
@@ -159,4 +212,84 @@ export class UploadQueue {
       this.#busy = false;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Store-only ZIP
+// ---------------------------------------------------------------------------
+//
+// A rescued round used to come out as one envelope-format .txt, which the
+// server could re-import but a person could not read. These are the same four
+// CSVs the server would have written, with the same names, so unzipping into
+// data/datasets/ gives a dataset indistinguishable from an uploaded one.
+//
+// Stored rather than deflated: CSV compresses well, but a correct deflate is a
+// lot of code to get wrong, and a rescue path is the worst place for a subtle
+// bug. Size is not the constraint here -- the data existing at all is.
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function u16(v) { return [v & 0xff, (v >>> 8) & 0xff]; }
+function u32(v) { return [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff]; }
+
+export function makeZip(entries) {
+  const enc = new TextEncoder();
+  const chunks = [];
+  const central = [];
+  let offset = 0;
+
+  for (const { name, text } of entries) {
+    const nameBytes = enc.encode(name);
+    const data = enc.encode(text);
+    const crc = crc32(data);
+
+    // Local file header. Timestamps are left at zero: a rescue file's value is
+    // its contents, and a wrong mtime is worse than an obviously absent one.
+    const local = [
+      ...u32(0x04034b50), ...u16(20), ...u16(0), ...u16(0),
+      ...u16(0), ...u16(0),
+      ...u32(crc), ...u32(data.length), ...u32(data.length),
+      ...u16(nameBytes.length), ...u16(0),
+    ];
+    chunks.push(new Uint8Array(local), nameBytes, data);
+
+    central.push([
+      ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0), ...u16(0),
+      ...u16(0), ...u16(0),
+      ...u32(crc), ...u32(data.length), ...u32(data.length),
+      ...u16(nameBytes.length), ...u16(0), ...u16(0),
+      ...u16(0), ...u16(0), ...u32(0), ...u32(offset),
+    ]);
+    central.push(nameBytes);
+    offset += local.length + nameBytes.length + data.length;
+  }
+
+  const dirStart = offset;
+  let dirSize = 0;
+  for (const c of central) {
+    const arr = c instanceof Uint8Array ? c : new Uint8Array(c);
+    chunks.push(arr);
+    dirSize += arr.length;
+  }
+  chunks.push(new Uint8Array([
+    ...u32(0x06054b50), ...u16(0), ...u16(0),
+    ...u16(entries.length), ...u16(entries.length),
+    ...u32(dirSize), ...u32(dirStart), ...u16(0),
+  ]));
+
+  return new Blob(chunks, { type: "application/zip" });
 }

@@ -82,6 +82,25 @@ export class Session {
   }
 
   get pendingUploads() { return this.#queue.pending(); }
+
+  // Try the queue again. The queue only flushed when a new round was added, so
+  // once a session ended there was no way to retry a failed upload at all --
+  // the rounds simply sat there with no path out.
+  retryUploads() { return this.#queue.flush(); }
+
+  // Confirm the PC will accept a round before a single one is recorded.
+  // Returns null when fine, or the reason it will not.
+  async checkCanWrite() {
+    try {
+      const res = await fetch("/writecheck", { method: "POST", headers: authHeaders() });
+      if (res.ok) return null;
+      return await res.text();
+    } catch (e) {
+      return "cannot reach the computer: " + e.message;
+    }
+  }
+
+  exportQueue() { return this.#queue.exportAll(); }
   get total() { return this.schedule.length; }
 
   // perf-time seconds, the timebase every stored sample uses.

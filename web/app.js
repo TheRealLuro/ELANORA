@@ -355,6 +355,14 @@ el("start").onclick = async () => {
     // AudioContext outside one, and the failure is silent.
     await session.initAudio();
     await holdScreen();
+    // Refuse to start if the PC will not accept a round. Thirty-six minutes of
+    // recording that cannot be saved is the most expensive way to find out.
+    const writeErr = await session.checkCanWrite();
+    if (writeErr) {
+      el("setup-err").textContent = "Cannot save to the computer — " + writeErr;
+      return;
+    }
+
     if (!soundChecked) {
       // One confirmation, not a block. A silent session costs 36 minutes and
       // produces data that looks flawless, so it is worth one deliberate tap.
@@ -399,6 +407,7 @@ session.onTick = (phase, remaining, i) => {
   // Deliberately says nothing about the condition. The subject is also the
   // operator here, and telling them which rounds are controls would
   // contaminate the comparison the controls exist to protect.
+  paintUploadState();
   el("run-hint").textContent = phase === "post"
     ? "Keep still. The sound has stopped; this part still counts."
     : "Sit still, eyes closed.";
@@ -483,16 +492,77 @@ el("survey-submit").onclick = async () => {
 
 // -------------------------------------------------------------------- done
 
+// Upload state while the session runs, so a failure is visible in the round it
+// happens rather than at the end of the session.
+let lastUploadPaint = 0;
+async function paintUploadState() {
+  const t = performance.now();
+  if (t - lastUploadPaint < 3000) return;
+  lastUploadPaint = t;
+  const left = await session.pendingUploads;
+  const el2 = el("run-drops");
+  if (left > 1) {
+    el2.textContent = `${left} rounds not yet saved to the computer`;
+    el2.style.color = "var(--warn)";
+  } else if (el2.style.color) {
+    el2.textContent = "";
+    el2.style.color = "";
+  }
+}
+
+async function paintPending() {
+  const left = await session.pendingUploads;
+  el("retry-uploads").hidden = left === 0;
+  el("save-rounds").hidden = left === 0;
+  el("save-hint").hidden = left === 0;
+  el("done-hint").textContent = left
+    ? `${left} rounds still waiting to upload.`
+    : "Everything uploaded. Run elanora_data on the PC to build the features.";
+  return left;
+}
+
+el("retry-uploads").onclick = async () => {
+  const btn = el("retry-uploads");
+  btn.disabled = true;
+  btn.textContent = "Retrying…";
+  try {
+    await session.retryUploads();
+  } catch (e) {
+    el("done-hint").textContent = "Still cannot reach the server: " + e.message;
+  }
+  btn.textContent = "Retry uploads";
+  btn.disabled = false;
+  await paintPending();
+};
+
+el("save-rounds").onclick = async () => {
+  const { count, blob, name } = await session.exportQueue();
+  if (!count) return;
+  // Share sheet first: on iOS that is what reaches Files and AirDrop. A plain
+  // download link is blocked in some in-app browsers, so it is the fallback
+  // rather than the first attempt.
+  const file = new File([blob], name, { type: "text/plain" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: "ELANORA rounds" });
+      return;
+    } catch { /* cancelled, fall through to the link */ }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+};
+
 session.onDone = async () => {
   show("done");
   // What actually reached disk, not what was scheduled. After a stop those
   // differ, and the scheduled number would overstate the session.
   el("done-count").textContent =
     `${session.completed} of ${session.total} rounds`;
-  const left = await session.pendingUploads;
-  el("done-hint").textContent = left
-    ? `${left} rounds still uploading — keep this page open until it reaches zero.`
-    : "Everything uploaded. Run elanora_data on the PC to build the features.";
+  await paintPending();
   try { wakeLock?.release(); } catch { /* already gone */ }
   wakeLock = null;
 };

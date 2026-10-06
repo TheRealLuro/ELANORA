@@ -14,6 +14,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <fstream>
+#include <iterator>
 #include <random>
 #include <string>
 
@@ -81,6 +83,7 @@ int main(int argc, char** argv) {
     std::string web = "web";
     std::string root = "data/datasets";
     std::string token;
+    std::string import_path;
     bool no_token = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--port") == 0 && i + 1 < argc) port = std::atoi(argv[++i]);
@@ -88,8 +91,55 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--root") == 0 && i + 1 < argc) root = argv[++i];
         else if (std::strcmp(argv[i], "--token") == 0 && i + 1 < argc) token = argv[++i];
         else if (std::strcmp(argv[i], "--no-token") == 0) no_token = true;
+        else if (std::strcmp(argv[i], "--import") == 0 && i + 1 < argc) import_path = argv[++i];
     }
     if (!no_token && token.empty()) token = random_token();
+
+    // Replay a rescued export straight into the dataset.
+    //
+    // The phone can write its queue to a file when it cannot upload -- a dead
+    // tunnel, a rejected token, a flat battery on the PC. That file is the same
+    // envelope the HTTP path parses, so recovery reuses exactly the same
+    // parsing and validation rather than a second, less-tested code path.
+    //
+    //   elanora_serve --import rescued.txt --root data/datasets
+    if (!import_path.empty()) {
+        std::ifstream in(import_path, std::ios::binary);
+        if (!in) {
+            std::fprintf(stderr, "cannot read %s\n", import_path.c_str());
+            return 1;
+        }
+        const std::string all((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+
+        const std::string sep = "===== ELANORA ROUND =====\n";
+        int ok = 0, failed = 0;
+        std::size_t pos = all.find(sep);
+        if (pos == std::string::npos) {
+            std::fprintf(stderr, "no rounds found -- is this an ELANORA export?\n");
+            return 1;
+        }
+        while (pos != std::string::npos) {
+            const std::size_t start = pos + sep.size();
+            const std::size_t next = all.find(sep, start);
+            const std::string body = all.substr(
+                start, next == std::string::npos ? std::string::npos : next - start);
+
+            elanora::server::RoundUpload r;
+            std::string err;
+            if (elanora::server::parse_round(body, r, err) &&
+                elanora::server::store_round(root, r, err)) {
+                std::printf("  stored  %s (%s)\n", r.trial_id.c_str(), r.condition.c_str());
+                ++ok;
+            } else {
+                std::printf("  FAILED  %s\n", err.c_str());
+                ++failed;
+            }
+            pos = next;
+        }
+        std::printf("\n%d rounds imported, %d failed\n", ok, failed);
+        return failed == 0 ? 0 : 1;
+    }
 
     httplib::Server srv;
     if (!srv.set_mount_point("/", web)) {
@@ -166,6 +216,23 @@ int main(int argc, char** argv) {
     // operator watching rounds land should not have to paste a secret to do it.
     srv.Get("/status", [&root](const httplib::Request&, httplib::Response& res) {
         res.set_content(elanora::server::dataset_status_json(root), "application/json");
+    });
+
+    // Can this page write, right now, with the token it holds?
+    //
+    // Without this an operator can record for 36 minutes and only discover at
+    // the end that every upload was refused -- which is exactly what happened:
+    // a page opened without the token in its URL recorded five rounds and got
+    // 401 on all of them, with nothing to say so until the session was over.
+    // Writing nothing on purpose; the answer is the status code.
+    srv.Post("/writecheck", [&token](const httplib::Request& req, httplib::Response& res) {
+        if (!authorized(req, token)) {
+            res.status = 401;
+            res.set_content("no write token -- reopen the app from the QR code",
+                            "text/plain");
+            return;
+        }
+        res.set_content("ok", "text/plain");
     });
 
     srv.Post("/round", [&root, &token](const httplib::Request& req, httplib::Response& res) {
