@@ -52,7 +52,8 @@ export class Session {
     this.banks = 1;
     this.bank = 0;
     this.freqLo = 0.5;
-    this.freqHi = 45;
+    this.freqHi = 16;
+    this.rangeName = "rhythm";
     // Carrier pitch -- the audible tone the rate is delivered on.
     //
     // Held CONSTANT for a whole session on purpose. The experiment's variable
@@ -229,7 +230,9 @@ export class Session {
       // to change to read a dataset that mixes them.
       // Envelope shape and which coverage bank this session ran, so the
       // analysis can tell sessions apart without guessing from the frequencies.
-      stim_mode: `sweep_${this.envelope}_b${this.bank + 1}of${this.banks}`,
+      // Range, envelope and bank, so the analysis can tell sessions apart
+      // without inferring any of it from the frequencies.
+      stim_mode: `${this.rangeName}_${this.envelope}_b${this.bank + 1}of${this.banks}`,
       carrier_hz: this.carrierHz.toFixed(6),
       duty_cycle: (0.5).toFixed(6),
       baseline_s: this.durations.baseline.toFixed(6),

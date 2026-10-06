@@ -293,6 +293,7 @@ for (const b of el("s-coverage").querySelectorAll("button")) {
     session.banks = Number(b.dataset.b);
     session.freqLo = Number(b.dataset.lo);
     session.freqHi = Number(b.dataset.hi);
+    session.rangeName = b.dataset.range;
     session.bank = 0;
     paintBanks();
     refreshSchedule();

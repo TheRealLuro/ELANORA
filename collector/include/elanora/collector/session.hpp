@@ -134,7 +134,24 @@ inline constexpr double kAudibleCrossoverHz = 20.0;
 // The widest range the hardware can deliver and a person can hear. Used only
 // when a session explicitly asks for full-range coverage; the default protocol
 // stays at kProtocolFreqHi, where entrainment is the question.
-inline constexpr double kFullRangeHi = 11000.0;
+inline constexpr double kFullRangeHi = 12000.0;
+
+// The full span as one half-octave grid: f(k) = 0.5 * sqrt(2)^k, k = 0..29,
+// reaching 11585 Hz. Sessions tile this grid rather than each inventing their
+// own spacing, so three sessions join end to end with no gap and no overlap.
+//
+// The split points are the REGIME boundary, not arbitrary thirds. k=10 is
+// 16 Hz, the last frequency deliverable as a rhythm; k=11 is 22.6 Hz, the
+// first deliverable as a pitch. Splitting there keeps every session internally
+// one kind of stimulus, which matters because a session that is half rhythm
+// and half pitch is two experiments sharing a subject's attention span.
+//
+// The cost is that range now covaries with session, so a subject who slept
+// badly before their pitch session makes pitch look different. Two mitigations,
+// both on the operator: randomise which range each subject does first, and run
+// every range across several subjects.
+inline constexpr double kGridBase  = 0.5;
+inline constexpr int    kGridSteps = 30;
 
 const char* delivery_name(double hz);
 inline constexpr int    kProtocolFreqCount = 14;

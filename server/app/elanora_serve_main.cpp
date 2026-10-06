@@ -151,8 +151,10 @@ int main(int argc, char** argv) {
             try { return std::stod(req.get_param_value(k)); }
             catch (const std::exception&) { return dflt; }
         };
-        const double lo = std::clamp(dbl("lo", kProtocolFreqLo), 0.1, 100.0);
-        const double hi = std::clamp(dbl("hi", kProtocolFreqHi), lo * 2.0, kFullRangeHi);
+        // lo may sit anywhere in the span -- a high-pitch session starts at
+        // 512 Hz -- so the old 100 Hz ceiling on lo silently clipped it.
+        const double lo = std::clamp(dbl("lo", kProtocolFreqLo), 0.1, kFullRangeHi * 0.5);
+        const double hi = std::clamp(dbl("hi", kProtocolFreqHi), lo * 1.4, kFullRangeHi);
 
         const auto all = geometric_set(lo, hi, count);
         const auto freqs = frequency_bank(all, bank, banks);

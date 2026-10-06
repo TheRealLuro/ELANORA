@@ -121,16 +121,18 @@
     <div class="grp">
       <div class="lbl">Frequency coverage</div>
       <div class="seg" id="s-coverage">
-        <button data-c="14" data-b="1" data-lo="0.5" data-hi="45" class="on">Rhythm</button>
-        <button data-c="27" data-b="2" data-lo="0.5" data-hi="45">Rhythm ×2</button>
-        <button data-c="30" data-b="2" data-lo="0.5" data-hi="11000">Full range</button>
+        <button data-c="11" data-b="1" data-lo="0.5" data-hi="16"
+                data-range="rhythm" class="on">Rhythm<br><small>0.5–16 Hz</small></button>
+        <button data-c="9" data-b="1" data-lo="22.627" data-hi="362.039"
+                data-range="lowpitch">Low pitch<br><small>23–362 Hz</small></button>
+        <button data-c="10" data-b="1" data-lo="512" data-hi="11585.2"
+                data-range="highpitch">High pitch<br><small>512 Hz–11.6 k</small></button>
       </div>
       <div class="hint" id="coverage-hint">
-        <b>Rhythm</b> covers 0.5–45 Hz, all delivered as a pulse rate — this is
-        the entrainment protocol. <b>Full range</b> goes 0.5 Hz to 11 kHz, which
-        crosses into audible pitch: below 20 Hz a frequency can only be a
-        rhythm, above it the frequency becomes the tone itself. Finer coverage
-        comes from more sessions, not longer ones.
+        Three ranges tile 0.5 Hz to 11.6 kHz with no gap, at half-octave steps
+        throughout. They split where the stimulus physically changes: up to
+        16 Hz a frequency can only be a pulse rhythm; from 23 Hz up it becomes
+        the tone itself. Run all three on a subject to cover the whole span.
       </div>
     </div>
 

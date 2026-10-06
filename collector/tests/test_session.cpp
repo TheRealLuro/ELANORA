@@ -342,3 +342,43 @@ TEST_CASE("four banks reach eighth-octave resolution inside the budget",
         REQUIRE(bank.back() >= all[49]);
     }
 }
+
+TEST_CASE("the three session ranges tile the span with no gap", "[session][coverage]") {
+    // Three sessions joining end to end on one half-octave grid, rather than
+    // each inventing its own spacing. A gap would leave frequencies untested
+    // forever; an overlap would spend a subject's attention twice on the same
+    // point.
+    const auto rhythm = geometric_set(0.5, 16.0, 11);
+    const auto low    = geometric_set(22.627, 362.039, 9);
+    const auto high   = geometric_set(512.0, 11585.2, 10);
+
+    REQUIRE(rhythm.size() + low.size() + high.size() == 30);
+
+    // Every step is a half octave, within the 0.1 Hz display rounding.
+    auto half_octave = [](const std::vector<double>& f) {
+        for (std::size_t i = 1; i < f.size(); ++i) {
+            const double r = f[i] / f[i - 1];
+            if (r < 1.38 || r > 1.45) return false;
+        }
+        return true;
+    };
+    REQUIRE(half_octave(rhythm));
+    REQUIRE(half_octave(low));
+    REQUIRE(half_octave(high));
+
+    // The joins are themselves half-octave steps, so the three sets are one
+    // continuous sequence rather than three disconnected runs.
+    REQUIRE(low.front() / rhythm.back() == Catch::Approx(std::sqrt(2.0)).epsilon(0.02));
+    REQUIRE(high.front() / low.back() == Catch::Approx(std::sqrt(2.0)).epsilon(0.02));
+
+    // Each split falls on the regime boundary, so no session mixes a rhythm
+    // stimulus with a pitch one.
+    for (double f : rhythm) REQUIRE(f < kAudibleCrossoverHz);
+    for (double f : low)    REQUIRE(f >= kAudibleCrossoverHz);
+    for (double f : high)   REQUIRE(f >= kAudibleCrossoverHz);
+
+    // And each stays inside the 36-minute budget.
+    for (const auto* set : {&rhythm, &low, &high}) {
+        REQUIRE(set->size() + kProtocolJitter + kProtocolTone <= 18);
+    }
+}
