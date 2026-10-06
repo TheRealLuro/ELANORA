@@ -102,16 +102,35 @@
     </div>
 
     <div class="grp">
+      <div class="lbl">Tone pitch <span class="sub">tap to hear it</span></div>
+      <div class="seg" id="s-carrier">
+        <button data-hz="220">220</button>
+        <button data-hz="440" class="on">440</button>
+        <button data-hz="1000">1k</button>
+        <button data-hz="2000">2k</button>
+        <button data-hz="4000">4k</button>
+      </div>
+      <div class="hint" id="carrier-hint">
+        The audible tone the pulses ride on, in hertz. It stays fixed for the
+        whole session — the pulse rate is what the experiment varies, and a
+        pitch that moved with the rate would make the two impossible to tell
+        apart. Pick whatever you can listen to for 36 minutes.
+      </div>
+    </div>
+
+    <div class="grp">
       <div class="lbl">Frequency coverage</div>
       <div class="seg" id="s-coverage">
-        <button data-c="14" data-b="1" class="on">Half-octave</button>
-        <button data-c="27" data-b="2">Quarter</button>
-        <button data-c="53" data-b="4">Eighth</button>
+        <button data-c="14" data-b="1" data-lo="0.5" data-hi="45" class="on">Rhythm</button>
+        <button data-c="27" data-b="2" data-lo="0.5" data-hi="45">Rhythm ×2</button>
+        <button data-c="30" data-b="2" data-lo="0.5" data-hi="11000">Full range</button>
       </div>
-      <div class="hint">
-        Finer coverage comes from more sessions, not longer ones: each session
-        stays near 36 minutes and takes every Nth frequency, so together they
-        cover the full set. Every session still spans 0.5–45 Hz.
+      <div class="hint" id="coverage-hint">
+        <b>Rhythm</b> covers 0.5–45 Hz, all delivered as a pulse rate — this is
+        the entrainment protocol. <b>Full range</b> goes 0.5 Hz to 11 kHz, which
+        crosses into audible pitch: below 20 Hz a frequency can only be a
+        rhythm, above it the frequency becomes the tone itself. Finer coverage
+        comes from more sessions, not longer ones.
       </div>
     </div>
 
@@ -122,12 +141,13 @@
 
     <div class="protocol" id="protocol">18 rounds · 36 min · 120 s per round</div>
 
-    <button class="secondary" id="test-sound">Test the sound</button>
+    <button class="secondary" id="test-sound">Test the sound — sweep 0.5 to 45 Hz</button>
     <div class="hint" id="test-hint">
-      Play four seconds of the real stimulus before you start. There is no way
-      for the app to check this itself — iOS mutes audio downstream of anything
-      the page can see, so a silent session would still record perfect-looking
-      data with no stimulus in it.
+      Plays the real stimulus across the whole range a session covers: a slow
+      pulse at the bottom, rising into a buzz at the top. There is no way for
+      the app to check this itself — iOS mutes audio downstream of anything the
+      page can see, so a silent session would still record perfect-looking data
+      with no stimulus in it.
     </div>
 
     <button id="start" disabled>Connect the headset first</button>

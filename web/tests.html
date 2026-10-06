@@ -17,7 +17,7 @@ import { Stream } from "./ringbuffer.js";
 import { assess, bandPowers, peakHz, heartRate, breathRate, motionEnergy } from "./dsp.js";
 import { toCsv, envelope } from "./upload.js";
 import { Round } from "./protocol.js";
-import { renderStimulus } from "./tone.js";
+import { renderStimulus, deliveryOf, AUDIBLE_CROSSOVER_HZ } from "./tone.js";
 
 const results = [];
 let group = "";
@@ -299,6 +299,126 @@ g("tone");
 }
 
 
+// ------------------------------------------------------------- pitch delivery
+g("delivery");
+{
+  // Below 20 Hz a frequency can only exist as a rhythm; above it, as a tone.
+  // The two are different stimuli on one axis, so which side a round falls on
+  // has to be unambiguous.
+  check("0.5 Hz is a rate", deliveryOf(0.5) === "rate");
+  check("19 Hz is a rate", deliveryOf(19) === "rate");
+  check("20 Hz is the crossover", deliveryOf(AUDIBLE_CROSSOVER_HZ) === "pitch");
+  check("440 Hz is a pitch", deliveryOf(440) === "pitch");
+  check("11 kHz is a pitch", deliveryOf(11000) === "pitch");
+
+  const SR = 48000;
+  const ctx = new OfflineAudioContext(1, SR, SR);
+  const peakHzOf = (a) => {
+    // Zero crossings are enough to identify a steady tone's frequency.
+    let n = 0;
+    for (let i = 1; i < a.length; i++) if (a[i - 1] <= 0 && a[i] > 0) n++;
+    return n / (a.length / SR);
+  };
+
+  // A pitch round must actually sound at its own frequency, not at 440.
+  const p1k = renderStimulus(ctx, { condition: "stim", hz: 1000, seconds: 1 })
+                .getChannelData(0);
+  check("a 1 kHz round sounds at 1 kHz", near(peakHzOf(p1k), 1000, 20),
+        `got ${peakHzOf(p1k).toFixed(0)} Hz`);
+
+  const p8k = renderStimulus(ctx, { condition: "stim", hz: 8000, seconds: 1 })
+                .getChannelData(0);
+  check("an 8 kHz round sounds at 8 kHz", near(peakHzOf(p8k), 8000, 60),
+        `got ${peakHzOf(p8k).toFixed(0)} Hz`);
+
+  // A rate round still rides the carrier, so its pitch stays put.
+  const r10 = renderStimulus(ctx, { condition: "stim", hz: 10, seconds: 1 })
+                .getChannelData(0);
+  check("a 10 Hz round still sounds at the carrier",
+        near(peakHzOf(r10), 440, 40), `got ${peakHzOf(r10).toFixed(0)} Hz`);
+
+  // Loudness must not jump across the crossover, or the regime change would be
+  // confounded with volume.
+  const rmsOf = (a) => { let s = 0; for (const x of a) s += x * x;
+                         return Math.sqrt(s / a.length); };
+  const r16 = renderStimulus(ctx, { condition: "stim", hz: 16, seconds: 2 })
+                .getChannelData(0);
+  const p25 = renderStimulus(ctx, { condition: "stim", hz: 25, seconds: 2 })
+                .getChannelData(0);
+  check("level holds across the rate/pitch crossover",
+        near(rmsOf(p25), rmsOf(r16), rmsOf(r16) * 0.1),
+        `rate ${rmsOf(r16).toFixed(4)} pitch ${rmsOf(p25).toFixed(4)}`);
+}
+
+// ----------------------------------------------------------- frequency sweep
+g("sweep");
+{
+  // The test tone used to play a fixed 4 Hz, so all three envelopes sounded
+  // like the same rate with a different beat and the one thing worth
+  // confirming -- that the rate changes -- was the one thing it could not show.
+  const SR = 48000;
+  const ctx = new OfflineAudioContext(1, SR * 8, SR);
+  const buf = renderStimulus(ctx, {
+    condition: "stim", hz: 0.5, sweepTo: 45, seconds: 8,
+  }).getChannelData(0);
+
+  // Count envelope onsets in the first and last two seconds. Blocks of 5 ms
+  // smooth the 440 Hz carrier while keeping the gate.
+  const onsetsIn = (from, to) => {
+    const a = buf.slice(Math.round(from * SR), Math.round(to * SR));
+    const block = Math.round(SR * 0.005);
+    const env = [];
+    for (let i = 0; i + block <= a.length; i += block) {
+      let m = 0;
+      for (let j = i; j < i + block; j++) m = Math.max(m, Math.abs(a[j]));
+      env.push(m);
+    }
+    const peak = Math.max(...env);
+    if (peak <= 0) return 0;
+    let n = 0, prev = false;
+    for (const x of env) {
+      const on = x > peak * 0.5;
+      if (on && !prev) n++;
+      prev = on;
+    }
+    return n;
+  };
+
+  const early = onsetsIn(0, 2);
+  const late = onsetsIn(6, 8);
+  check("a sweep speeds up across its length", late > early * 5,
+        `first 2 s: ${early} pulses, last 2 s: ${late}`);
+  check("the sweep starts slow", early <= 4, `got ${early}`);
+  check("the sweep ends fast", late >= 40, `got ${late}`);
+
+  // Loudness must not drift across the sweep, or the demo would suggest the
+  // high end is a weaker stimulus -- the exact confound the gain correction
+  // exists to remove.
+  const rmsOf = (from, to) => {
+    const a = buf.slice(Math.round(from * SR), Math.round(to * SR));
+    let s = 0;
+    for (const x of a) s += x * x;
+    return Math.sqrt(s / a.length);
+  };
+  check("a sweep holds its level end to end",
+        near(rmsOf(6, 8), rmsOf(0, 2), rmsOf(0, 2) * 0.12),
+        `start ${rmsOf(0, 2).toFixed(4)} end ${rmsOf(6, 8).toFixed(4)}`);
+
+  // The sweep must be opt-in only: a normal round holds one rate for 30 s.
+  const fixed = renderStimulus(ctx, { condition: "stim", hz: 10, seconds: 8 })
+                  .getChannelData(0);
+  const f1 = (() => { const a = fixed; let n = 0, prev = false;
+    const block = Math.round(SR * 0.005); const env = [];
+    for (let i = 0; i + block <= SR * 2; i += block) {
+      let m = 0; for (let j = i; j < i + block; j++) m = Math.max(m, Math.abs(a[j]));
+      env.push(m); }
+    const peak = Math.max(...env);
+    for (const x of env) { const on = x > peak * 0.5; if (on && !prev) n++; prev = on; }
+    return n; })();
+  check("without sweepTo the rate is constant", near(f1, 20, 2),
+        `${f1} pulses in 2 s at 10 Hz`);
+}
+
 // -------------------------------------------------- tone <-> C++ conformance
 g("tone conformance");
 {
@@ -323,7 +443,8 @@ g("tone conformance");
     ["control_jitter_10hz", { condition: "control_jitter", jitterMeanHz: 10, seed: 7 }],
     ["control_tone", { condition: "control_tone", seed: 1 }],
     ["wave_10hz", { condition: "stim", hz: 10, seed: 1, envelope: "wave" }],
-    ["wave_45hz", { condition: "stim", hz: 45, seed: 1, envelope: "wave" }],
+    ["wave_19hz", { condition: "stim", hz: 19, seed: 1, envelope: "wave" }],
+    ["pitch_1khz", { condition: "stim", hz: 1000, seed: 1 }],
     ["swell_10hz", { condition: "stim", hz: 10, seed: 1, envelope: "swell" }],
   ];
 

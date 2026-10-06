@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <random>
 #include <string>
 
@@ -142,7 +143,18 @@ int main(int argc, char** argv) {
         const int banks = num("banks", 1);
         const int bank = num("bank", 0);
 
-        const auto all = geometric_set(kProtocolFreqLo, kProtocolFreqHi, count);
+        // Range is a parameter so a session can cover the full audible span
+        // rather than only the entrainment band. Clamped to what the hardware
+        // can deliver and a person can hear.
+        auto dbl = [&](const char* k, double dflt) {
+            if (!req.has_param(k)) return dflt;
+            try { return std::stod(req.get_param_value(k)); }
+            catch (const std::exception&) { return dflt; }
+        };
+        const double lo = std::clamp(dbl("lo", kProtocolFreqLo), 0.1, 100.0);
+        const double hi = std::clamp(dbl("hi", kProtocolFreqHi), lo * 2.0, kFullRangeHi);
+
+        const auto all = geometric_set(lo, hi, count);
         const auto freqs = frequency_bank(all, bank, banks);
         const auto rounds = build_schedule(freqs, jitter, tone, seed);
         res.set_content(elanora::server::schedule_json(rounds), "application/json");

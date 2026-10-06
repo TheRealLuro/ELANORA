@@ -235,6 +235,21 @@ const reseed = () => {
 };
 el("reseed").onclick = reseed;
 
+// Carrier pitch. Tapping a button both selects it and plays it, because the
+// only way to judge "can I listen to this for 36 minutes" is to hear it.
+for (const b of el("s-carrier").querySelectorAll("button")) {
+  b.onclick = async () => {
+    for (const o of el("s-carrier").querySelectorAll("button")) o.classList.remove("on");
+    b.classList.add("on");
+    session.carrierHz = Number(b.dataset.hz);
+    try {
+      await session.auditionCarrier(session.carrierHz);
+    } catch (e) {
+      el("carrier-hint").textContent = "Could not play: " + e.message;
+    }
+  };
+}
+
 // Envelope shape is a session-level choice, not a per-round one.
 //
 // Interleaving both within a session would double it to 36 rounds and 72
@@ -276,6 +291,8 @@ for (const b of el("s-coverage").querySelectorAll("button")) {
     b.classList.add("on");
     session.freqCount = Number(b.dataset.c);
     session.banks = Number(b.dataset.b);
+    session.freqLo = Number(b.dataset.lo);
+    session.freqHi = Number(b.dataset.hi);
     session.bank = 0;
     paintBanks();
     refreshSchedule();
@@ -316,13 +333,14 @@ let soundChecked = false;
 el("test-sound").onclick = async () => {
   const btn = el("test-sound");
   btn.disabled = true;
-  btn.textContent = "Playing…";
+  btn.textContent = "Playing — 18 s sweep…";
   try {
     await session.testTone();
     soundChecked = true;
     btn.textContent = "Play again";
     el("test-hint").textContent =
-      "If you heard four slow pulses, the stimulus will reach the subject.";
+      "If you heard the pulse start slow and speed up into a buzz, the " +
+      "stimulus is reaching the subject across the whole range.";
   } catch (e) {
     el("test-hint").textContent = "Could not play: " + e.message;
   }

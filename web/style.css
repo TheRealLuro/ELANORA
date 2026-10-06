@@ -140,3 +140,5 @@ nav.tabs { display: flex; gap: 6px; background: #12161c; padding: 4px;
                 color: var(--muted); border: 1px solid var(--line);
                 border-radius: 10px; }
 .chips button.on { background: #1f3350; color: var(--text); border-color: var(--accent); }
+
+.lbl .sub { color: var(--faint); font-weight: 400; }

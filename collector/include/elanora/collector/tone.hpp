@@ -53,6 +53,8 @@ private:
     StimMode  mode_ = StimMode::Single;
     Envelope  envelope_ = Envelope::Gated;
     double    env_gain_ = 1.0;
+    // True when the frequency is delivered as pitch rather than as a rate.
+    bool      pitch_mode_ = false;
     double carrier_hz_ = 440.0;
     double duty_ = 0.5;
     double amplitude_ = 0.5;

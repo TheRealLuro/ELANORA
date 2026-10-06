@@ -26,6 +26,10 @@ constexpr double kWaveScale = 1.1547005383792515;   // 2/sqrt(3)
 constexpr double kTwoPi = 6.283185307179586;
 }  // namespace
 
+const char* delivery_name(double hz) {
+    return hz >= kAudibleCrossoverHz ? "pitch" : "rate";
+}
+
 const char* envelope_name(Envelope e) {
     switch (e) {
         case Envelope::Wave:  return "wave";
@@ -55,6 +59,12 @@ void ToneGenerator::configure(const StimulusDesign& design, Condition cond, doub
 
     n_layers_ = 0;
     for (int i = 0; i < kMaxLayers; ++i) { rate_[i] = 0.0; amp_[i] = 0.0; gate_phase_[i] = 0.0; }
+
+    // Above the crossover the frequency is the pitch, so the carrier becomes
+    // the stimulus and the gate is left open. Below it the frequency is a
+    // rhythm and the carrier is only the vehicle.
+    pitch_mode_ = (cond == Condition::Stim && hz >= kAudibleCrossoverHz);
+    if (pitch_mode_) carrier_hz_ = hz;
 
     if (cond == Condition::Stim) {
         if (mode_ == StimMode::Stacked) {
@@ -99,7 +109,8 @@ void ToneGenerator::configure(const StimulusDesign& design, Condition cond, doub
 // Simulating the envelope for a second is cheap and happens once per round, off
 // the audio thread, so the correction is measured rather than modelled.
 double ToneGenerator::normalising_gain() {
-    if (cond_ != Condition::Stim || envelope_ != Envelope::Gated || n_layers_ <= 0) {
+    if (pitch_mode_ || cond_ != Condition::Stim ||
+        envelope_ != Envelope::Gated || n_layers_ <= 0) {
         return 1.0;
     }
     double ph[kMaxLayers];
@@ -159,7 +170,11 @@ void ToneGenerator::render(float* out, int frames) {
         double target = 0.0;
 
         if (open) {
-            if (cond_ == Condition::ControlTone) {
+            if (pitch_mode_) {
+                // A steady tone at the stimulus frequency. Scaled like the
+                // tone control, because it is the same shape of sound.
+                target = kContinuousScale;
+            } else if (cond_ == Condition::ControlTone) {
                 target = kContinuousScale;
             } else if (cond_ == Condition::ControlJitter) {
                 jitter_t_ += dt;
@@ -208,7 +223,7 @@ void ToneGenerator::render(float* out, int frames) {
         // low-pass sits near 40 Hz, so at the top of the frequency set it would
         // measurably shrink the modulation depth -- quietly making a 45 Hz wave
         // round a weaker stimulus than a 4 Hz one.
-        if (envelope_ != Envelope::Gated && cond_ == Condition::Stim) {
+        if (!pitch_mode_ && envelope_ != Envelope::Gated && cond_ == Condition::Stim) {
             env_ = target;
         } else {
             env_ += (target - env_) * ramp_coeff_;

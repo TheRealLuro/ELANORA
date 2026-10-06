@@ -75,7 +75,10 @@ int main() {
     emit("control_jitter_10hz", render(Condition::ControlJitter, 0.0, 10.0, 7), false);
     emit("control_tone", render(Condition::ControlTone, 0.0, 0.0, 1), false);
     emit("wave_10hz", render(Condition::Stim, 10.0, 0.0, 1, Envelope::Wave), false);
-    emit("wave_45hz", render(Condition::Stim, 45.0, 0.0, 1, Envelope::Wave), false);
+    // 19 Hz, not 45: above the 20 Hz crossover a frequency is delivered as a
+    // pitch, so no envelope applies and the case would test nothing.
+    emit("wave_19hz", render(Condition::Stim, 19.0, 0.0, 1, Envelope::Wave), false);
+    emit("pitch_1khz", render(Condition::Stim, 1000.0, 0.0, 1), false);
     emit("swell_10hz", render(Condition::Stim, 10.0, 0.0, 1, Envelope::Swell), true);
 
     std::printf("}\n");

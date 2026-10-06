@@ -30,6 +30,19 @@ const WAVE_SCALE = 1.1547005383792515;
 // from a startle response to a sound starting.
 const SWELL_DEPTH = 0.35;
 
+// Above this the frequency is delivered as the tone itself; below it, as a
+// pulse rate gating an audible carrier.
+//
+// The split is physical. Hearing starts near 20 Hz, so 0.5 Hz cannot be played
+// as a tone at all -- it only exists as a rhythm. Above 20 Hz the frequency can
+// be the pitch directly, and gating becomes the awkward option instead: a 1 kHz
+// gate rate on a 440 Hz carrier is not a rhythm, it is noise.
+export const AUDIBLE_CROSSOVER_HZ = 20;
+
+export function deliveryOf(hz) {
+  return hz >= AUDIBLE_CROSSOVER_HZ ? "pitch" : "rate";
+}
+
 // xorshift64, matching ToneGenerator::next_jitter_gap, so a recorded jitter
 // round can be regenerated exactly from its seed when reviewing a session.
 function xorshift(state) {
@@ -52,6 +65,7 @@ export function renderStimulus(ctx, opts) {
     seconds = 30,
     amplitude = 0.5,
     envelope = "gated",
+    sweepTo = 0,
   } = opts;
 
   const sr = ctx.sampleRate;
@@ -65,8 +79,23 @@ export function renderStimulus(ctx, opts) {
   const dt = 1 / sr;
   const clampedDuty = Math.min(0.95, Math.max(0.05, duty));
 
+  // Pitch delivery: the stimulus frequency becomes the carrier and the gate
+  // stays open, so what is heard is a steady tone at that frequency.
+  const pitchMode = condition === "stim" && !rates && hz >= AUDIBLE_CROSSOVER_HZ
+                    && sweepTo <= 0;
+  const carrier0 = pitchMode ? hz : carrierHz;
+
   const layers = (rates && rates.length) ? rates : [hz];
   const gatePhase = layers.map(() => 0);
+
+  // Frequency sweep -- a VERIFICATION AID, never a stimulus condition. No
+  // recorded round sweeps; every round holds one rate for its full 30 s. This
+  // exists so the operator can hear the whole 0.5-45 Hz range in one go and
+  // confirm the rate really is changing, which a fixed-rate test tone cannot
+  // show. Logarithmic, matching the protocol's own half-octave spacing, so the
+  // sweep spends equal time per octave rather than racing through the bottom.
+  const sweeping = sweepTo > 0 && sweepTo !== hz && !(rates && rates.length);
+  const rateAt = (t) => hz * Math.pow(sweepTo / hz, Math.min(1, t / seconds));
 
   let rng = BigInt(seed || 1);
   const nextGap = () => {
@@ -89,30 +118,48 @@ export function renderStimulus(ctx, opts) {
   //
   // Measured over whole periods of the SLOWEST layer: a fixed one-second
   // window puts 0.5 Hz, whose period is two seconds, at 0.177 instead of 0.250.
-  const normalisingGain = () => {
-    if (condition !== "stim" || envelope !== "gated") return 1;
-    const positive = layers.filter((r) => r > 0);
+  const normalisingGain = (rateList, periods = 8) => {
+    if (pitchMode || condition !== "stim" || envelope !== "gated") return 1;
+    const positive = rateList.filter((r) => r > 0);
     if (!positive.length) return 1;
     const slowest = Math.min(...positive);
 
-    const steps = Math.round(sr * Math.max(1, 8 / slowest));
-    const ph = layers.map(() => 0);
+    const steps = Math.round(sr * Math.max(1, periods / slowest));
+    const ph = rateList.map(() => 0);
     let e = 0;
     let acc = 0;
     for (let i = 0; i < steps; i++) {
       let sum = 0;
-      for (let l = 0; l < layers.length; l++) {
-        ph[l] += layers[l] * dt;
+      for (let l = 0; l < rateList.length; l++) {
+        ph[l] += rateList[l] * dt;
         if (ph[l] >= 1) ph[l] -= 1;
         sum += ph[l] < clampedDuty ? 1 : 0;
       }
-      e += (sum / layers.length - e) * rampCoeff;
+      e += (sum / rateList.length - e) * rampCoeff;
       acc += e * e;
     }
     const measured = Math.sqrt(acc / steps);
     return measured > 1e-9 ? Math.sqrt(clampedDuty) / measured : 1;
   };
-  const envGain = normalisingGain();
+  const envGain = normalisingGain(layers);
+
+  // A sweep passes through every rate, and the loudness correction differs at
+  // each one -- so a single gain would make the top of the sweep quieter than
+  // the bottom, which is the exact confound the correction exists to remove.
+  // Sampled at a few log-spaced rates and interpolated; four periods rather
+  // than eight keeps a button press responsive at the slow end.
+  const sweepTable = [];
+  if (sweeping) {
+    for (let k = 0; k <= 8; k++) {
+      const r = hz * Math.pow(sweepTo / hz, k / 8);
+      sweepTable.push(normalisingGain([r], 4));
+    }
+  }
+  const sweepGain = (t) => {
+    const u = Math.min(1, Math.max(0, t / seconds)) * 8;
+    const i0 = Math.min(7, Math.floor(u));
+    return sweepTable[i0] + (sweepTable[i0 + 1] - sweepTable[i0]) * (u - i0);
+  };
 
   let env = 0;
   let carrier = 0;
@@ -120,12 +167,16 @@ export function renderStimulus(ctx, opts) {
   let jOn = true;
   let jNext = nextGap();
   const jWidth = clampedDuty / jitterMeanHz;
-  const carrierInc = TAU * carrierHz / sr;
+  const carrierInc = TAU * carrier0 / sr;
 
   for (let i = 0; i < n; i++) {
     let target = 0;
 
-    if (condition === "control_tone") {
+    if (pitchMode) {
+      // A steady tone at the stimulus frequency, scaled like the tone control
+      // because it is the same shape of sound.
+      target = CONTINUOUS_SCALE;
+    } else if (condition === "control_tone") {
       target = CONTINUOUS_SCALE;
     } else if (condition === "control_jitter") {
       jT += dt;
@@ -141,6 +192,9 @@ export function renderStimulus(ctx, opts) {
     } else {
       // Sum the envelopes and divide by the layer count, so stacking can never
       // clip and adding a layer never raises the level.
+      // One layer, re-rated per sample. Phase keeps accumulating across the
+      // change, so the sweep glides rather than clicking at each step.
+      if (sweeping) layers[0] = rateAt(i * dt);
       let sum = 0;
       for (let l = 0; l < layers.length; l++) {
         gatePhase[l] += layers[l] * dt;
@@ -164,13 +218,14 @@ export function renderStimulus(ctx, opts) {
     // and a 4 ms low-pass sits near 40 Hz, so at the top of the frequency set
     // it would measurably shrink the modulation depth -- quietly making a
     // 45 Hz wave round a weaker stimulus than a 4 Hz one.
-    if (envelope !== "gated" && condition === "stim") env = target;
+    if (!pitchMode && envelope !== "gated" && condition === "stim") env = target;
     else env += (target - env) * rampCoeff;
 
     carrier += carrierInc;
     if (carrier >= TAU) carrier -= TAU;
 
-    out[i] = Math.sin(carrier) * env * amplitude * envGain;
+    out[i] = Math.sin(carrier) * env * amplitude *
+             (sweeping ? sweepGain(i * dt) : envGain);
   }
   return buf;
 }

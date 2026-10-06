@@ -114,6 +114,29 @@ struct PlannedRound {
 // and would stretch the session from 18 rounds to 20.
 inline constexpr double kProtocolFreqLo    = 0.5;
 inline constexpr double kProtocolFreqHi    = 45.0;
+
+// Above this, a frequency is delivered as the tone itself; below it, as a
+// pulse rate gating an audible carrier.
+//
+// The split is physical, not a preference. Human hearing starts near 20 Hz, so
+// 0.5 Hz cannot be played as a tone at all -- it only exists as a rhythm. Above
+// 20 Hz the frequency can be the pitch directly, and gating becomes the awkward
+// option instead: a 1 kHz gate rate on a 440 Hz carrier is not a rhythm, it is
+// noise.
+//
+// A sweep that crosses this line is therefore two kinds of stimulus on one
+// axis, and the analysis has to know which side a round came from. Below it,
+// the question is entrainment -- does the brain follow the rhythm. Above it,
+// the question is whether a sustained pitch shifts ongoing activity, which is
+// a different mechanism with a different expected signature.
+inline constexpr double kAudibleCrossoverHz = 20.0;
+
+// The widest range the hardware can deliver and a person can hear. Used only
+// when a session explicitly asks for full-range coverage; the default protocol
+// stays at kProtocolFreqHi, where entrainment is the question.
+inline constexpr double kFullRangeHi = 11000.0;
+
+const char* delivery_name(double hz);
 inline constexpr int    kProtocolFreqCount = 14;
 inline constexpr int    kProtocolJitter    = 2;
 inline constexpr int    kProtocolTone      = 2;

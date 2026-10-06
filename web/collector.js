@@ -51,6 +51,18 @@ export class Session {
     this.freqCount = 14;
     this.banks = 1;
     this.bank = 0;
+    this.freqLo = 0.5;
+    this.freqHi = 45;
+    // Carrier pitch -- the audible tone the rate is delivered on.
+    //
+    // Held CONSTANT for a whole session on purpose. The experiment's variable
+    // is the pulse rate; the carrier is only the vehicle that makes a 10 Hz
+    // rate physically audible. If the pitch moved with the rate, pitch and
+    // rate would covary and no response could be attributed to either -- the
+    // same class of confound as the loudness drift that made 45 Hz rounds 17%
+    // quieter than 0.5 Hz ones. It is a session-level setting so two sessions
+    // can be compared at different pitches, with pitch fixed inside each.
+    this.carrierHz = 440;
     // Latest telemetry reading, set by the BLE handler.
     this.telemetry = null;
     // Rounds that completed the full cycle and reached disk.
@@ -76,7 +88,8 @@ export class Session {
 
   async fetchSchedule() {
     const url = `/schedule?seed=${this.seed}` +
-                `&count=${this.freqCount}&banks=${this.banks}&bank=${this.bank}`;
+                `&count=${this.freqCount}&banks=${this.banks}&bank=${this.bank}` +
+                `&lo=${this.freqLo}&hi=${this.freqHi}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`schedule: ${res.status}`);
     const json = await res.json();
@@ -141,18 +154,29 @@ export class Session {
     return this.#ctx;
   }
 
-  // Four seconds of the exact stimulus a round would play, so the operator can
-  // confirm sound is actually reaching their ears before committing to 36
-  // minutes. There is no way to verify this in software: iOS mutes downstream
-  // of everything the page can observe, so an AnalyserNode would happily
-  // report a healthy signal into a silent speaker.
+  // A sweep across the whole frequency range, in the envelope this session
+  // will actually use.
+  //
+  // It used to play a fixed 4 Hz, which demonstrated the envelope shape and
+  // nothing else -- so all three envelopes sounded like the same rate with a
+  // different beat, and the thing most worth confirming, that the rate really
+  // does change, was the one thing it could not show. Sweeping 0.5 to 45 Hz
+  // plays the full span a session covers: a slow pulse at the bottom, rising
+  // until it fuses into a buzz near the top.
+  //
+  // It also confirms sound is reaching the ears at all, which no amount of
+  // software can check: iOS mutes downstream of everything the page can
+  // observe, so an AnalyserNode would happily report a healthy signal into a
+  // silent speaker.
   async testTone() {
     const ctx = await this.initAudio();
     const buf = renderStimulus(ctx, {
       condition: "stim",
-      hz: 4,                       // slow enough to hear the envelope shape
-      seconds: 4,
+      hz: 0.5,                     // the protocol floor
+      sweepTo: 45,                 // the protocol ceiling
+      seconds: 18,
       envelope: this.envelope,
+      carrierHz: this.carrierHz,
     });
     const src = ctx.createBufferSource();
     src.buffer = buf;
@@ -206,7 +230,7 @@ export class Session {
       // Envelope shape and which coverage bank this session ran, so the
       // analysis can tell sessions apart without guessing from the frequencies.
       stim_mode: `sweep_${this.envelope}_b${this.bank + 1}of${this.banks}`,
-      carrier_hz: (440).toFixed(6),
+      carrier_hz: this.carrierHz.toFixed(6),
       duty_cycle: (0.5).toFixed(6),
       baseline_s: this.durations.baseline.toFixed(6),
       stimulus_s: this.durations.stimulus.toFixed(6),
@@ -269,6 +293,7 @@ export class Session {
       seed: this.seed + i,
       seconds: this.durations.stimulus,
       envelope: this.envelope,
+      carrierHz: this.carrierHz,
     });
 
     const t0 = this.#now();
@@ -422,6 +447,24 @@ export class Session {
     } catch (e) {
       this.onError?.("survey not uploaded: " + e.message);
     }
+  }
+
+  // Three seconds of the chosen carrier, steady, so it can be judged by ear
+  // before committing a session to it. Separate from the stimulus test on
+  // purpose: this one answers "can I listen to this pitch for 36 minutes",
+  // which is a different question from "is the stimulus reaching me".
+  async auditionCarrier(hz) {
+    const ctx = await this.initAudio();
+    const buf = renderStimulus(ctx, {
+      condition: "control_tone",   // unmodulated: pitch only, no rate
+      seconds: 3,
+      carrierHz: hz,
+    });
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start();
+    return new Promise((resolve) => { src.onended = resolve; });
   }
 
   abort() {
