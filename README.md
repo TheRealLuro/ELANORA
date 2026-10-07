@@ -124,6 +124,7 @@ Browser tests live at `/tests.html` — 90 of them, including a numerical confor
 | **[ARCHITECTURE](docs/ARCHITECTURE.md)** | Inputs and outputs per stage in pseudocode, hot paths, extension points |
 | **[DESIGN](docs/DESIGN.md)** | The protocol and the reasoning behind it |
 | **[PROJECT STRUCTURE](docs/PROJECT_STRUCTURE.md)** | Every folder and what lives in it |
+| **[CHANGELOG](CHANGELOG.md)** | What changed and why, including the failures that caused it |
 | [specs](docs/specs/) · [plans](docs/plans/) | Design records from during the build |
 
 ## Built with

@@ -45,3 +45,7 @@ common/third_party/stb_image_write.h
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# Runtime log from elanora_serve. Useful while recording, never part of the
+# project -- and it contains the peer addresses of every device that connected.
+server.log
