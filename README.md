@@ -40,15 +40,19 @@ The phone runs the session because acquisition needs a Bluetooth radio, and it g
 
 ### Verified on hardware
 
-One recorded round, straight off the headset:
+Recorded rounds, straight off the headset:
 
 ```
 markers   exactly 30.000 s apart across baseline / stimulus / post
-EEG       23,271 samples · 90.9 s · 256.0 Hz · zero dropped packets
-          TP9 33 µV   AF7 13 µV   AF8 20 µV   TP10 36 µV
+EEG       24,064 samples · 94.0 s · 256.0 Hz · zero dropped packets
+          electrode RMS 6-26 µV across TP9 / AF7 / AF8 / TP10
 PPG       64.0 Hz, clear pulse waveform
 IMU       52.0 Hz, 0.94-1.02 g
 ```
+
+Band powers are computed on the PC from those raw samples, never recorded by
+the phone — otherwise the numbers would depend on which handset ran the
+session, and two subjects would not be comparable.
 
 ## Status
 
@@ -57,12 +61,12 @@ Complete and tested end to end. Not yet a finished study — that needs subjects
 | | |
 |---|---|
 | Acquisition, stimulus, protocol, storage | done, hardware-verified |
-| Feature extraction, evidence gate, models, optimizer | done, 260 C++ tests |
-| Phone collector | done, 90 browser tests |
-| **Data collected** | **1 round — the pipeline proof, not a dataset** |
-| **Remaining** | ≥4 subjects × ≥2 sessions, then the evidence gate decides whether any of it means anything |
+| Feature extraction, evidence gate, models, optimizer | done, 261 C++ tests |
+| Phone collector | done, 106 browser tests |
+| **Data collected** | **6 rounds, 1 subject — pipeline proof, not a dataset** |
+| **Remaining** | 6 subjects × 3 ranges, then the evidence gate decides whether any of it means anything |
 
-The analysis half has only ever run on synthetic fixtures with a planted effect. It finds that effect and refuses when there is none, which is the most that can be claimed before real sessions exist.
+Covering 0.5 Hz to 11.6 kHz takes three sessions per subject, one per range. The analysis half has only ever run on synthetic fixtures with a planted effect — it finds that effect and refuses when there is none, which is the most that can be claimed before real sessions exist.
 
 ## Screenshots
 
@@ -83,7 +87,7 @@ The analysis half has only ever run on synthetic fixtures with a planted effect.
 ```bash
 cmake -B build -S .
 cmake --build build --config Release
-ctest --test-dir build -C Release     # 260 tests
+ctest --test-dir build -C Release     # 261 tests
 ```
 
 Run a session:
@@ -101,7 +105,7 @@ Then analyse:
 ./build/bin/Release/elanora_models    # train, then invert
 ```
 
-Browser tests live at `/tests.html` — 90 of them, including a numerical conformance check between the browser and C++ stimulus generators.
+Browser tests live at `/tests.html` — 106 of them, including a numerical conformance check between the browser and C++ stimulus generators.
 
 ## Layout
 
